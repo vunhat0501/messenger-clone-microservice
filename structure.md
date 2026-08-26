@@ -3,155 +3,181 @@
 ```markdown
 ├── apps
 | ├── api
+| | ├── apps
+| | | ├── api
+| | | | ├── src
+| | | | | ├── app.controller.spec.ts
+| | | | | ├── app.controller.ts
+| | | | | ├── app.module.ts
+| | | | | ├── app.service.ts
+| | | | | ├── auth
+| | | | | | ├── config
+| | | | | | | ├── jwt.config.ts
+| | | | | | | └── refresh.config.ts
+| | | | | | ├── decorators
+| | | | | | | ├── get-user.decorator.ts
+| | | | | | | ├── public.decorator.ts
+| | | | | | | └── roles.decorator.ts
+| | | | | | ├── guards
+| | | | | | | ├── jwt-auth
+| | | | | | | | ├── jwt-auth.guard.spec.ts
+| | | | | | | | └── jwt-auth.guard.ts
+| | | | | | | ├── local-auth
+| | | | | | | | ├── local-auth.guard.spec.ts
+| | | | | | | | └── local-auth.guard.ts
+| | | | | | | ├── refresh-auth
+| | | | | | | | ├── refresh-auth.guard.spec.ts
+| | | | | | | | └── refresh-auth.guard.ts
+| | | | | | | └── roles
+| | | | | | | ├── roles.guard.spec.ts
+| | | | | | | └── roles.guard.ts
+| | | | | | ├── interceptor
+| | | | | | | └── token.interceptor.ts
+| | | | | | ├── strategies
+| | | | | | | ├── jwt.strategy.ts
+| | | | | | | ├── local.strategy.ts
+| | | | | | | └── refresh-jwt.strategy.ts
+| | | | | | └── types
+| | | | | | └── auth-jwt-payload.d.ts
+| | | | | ├── common
+| | | | | | ├── filter
+| | | | | | | └── all-exception
+| | | | | | | ├── all-exception.filter.spec.ts
+| | | | | | | └── all-exception.filter.ts
+| | | | | | ├── interceptor
+| | | | | | | ├── timeout
+| | | | | | | | ├── timeout.interceptor.spec.ts
+| | | | | | | | └── timeout.interceptor.ts
+| | | | | | | └── transform
+| | | | | | | ├── transform.interceptor.spec.ts
+| | | | | | | └── transform.interceptor.ts
+| | | | | | └── middleware
+| | | | | | └── logger
+| | | | | | ├── logger.middleware.spec.ts
+| | | | | | └── logger.middleware.ts
+| | | | | ├── config
+| | | | | | └── env.config.ts
+| | | | | └── main.ts
+| | | | ├── test
+| | | | | ├── app.e2e-spec.ts
+| | | | | └── jest-e2e.json
+| | | | └── tsconfig.app.json
+| | | ├── auth-service
+| | | | ├── social
+| | | | | ├── entities
+| | | | | | └── follow.entity.ts
+| | | | | ├── social.controller.spec.ts
+| | | | | ├── social.controller.ts
+| | | | | ├── social.module.ts
+| | | | | ├── social.service.spec.ts
+| | | | | └── social.service.ts
+| | | | ├── src
+| | | | | ├── auth
+| | | | | | ├── auth.controller.spec.ts
+| | | | | | ├── auth.controller.ts
+| | | | | | ├── auth.module.ts
+| | | | | | ├── auth.service.spec.ts
+| | | | | | ├── auth.service.ts
+| | | | | | ├── dto
+| | | | | | | ├── create-auth.dto.ts
+| | | | | | | └── update-auth.dto.ts
+| | | | | | └── entities
+| | | | | | └── auth.entity.ts
+| | | | | ├── auth-service.controller.spec.ts
+| | | | | ├── auth-service.controller.ts
+| | | | | ├── auth-service.module.ts
+| | | | | ├── auth-service.service.ts
+| | | | | ├── config
+| | | | | | └── postgres.config.ts
+| | | | | ├── database
+| | | | | | ├── data-source.ts
+| | | | | | ├── factories
+| | | | | | | ├── auth.factory.ts
+| | | | | | | └── user.factory.ts
+| | | | | | ├── migrations
+| | | | | | | └── postgres
+| | | | | | ├── postgres-database.module.ts
+| | | | | | ├── seed.ts
+| | | | | | └── seeds
+| | | | | | └── postgres.seeder.ts
+| | | | | ├── main.ts
+| | | | | └── user
+| | | | | ├── dto
+| | | | | | ├── create-user.dto.ts
+| | | | | | └── update-user.dto.ts
+| | | | | ├── entities
+| | | | | | └── user.entity.ts
+| | | | | ├── user.controller.spec.ts
+| | | | | ├── user.controller.ts
+| | | | | ├── user.module.ts
+| | | | | ├── user.service.spec.ts
+| | | | | └── user.service.ts
+| | | | ├── test
+| | | | | ├── app.e2e-spec.ts
+| | | | | └── jest-e2e.json
+| | | | └── tsconfig.app.json
+| | | └── chat-service
+| | | ├── src
+| | | | ├── chat-service.controller.spec.ts
+| | | | ├── chat-service.controller.ts
+| | | | ├── chat-service.module.ts
+| | | | ├── chat-service.service.ts
+| | | | └── main.ts
+| | | ├── test
+| | | | ├── app.e2e-spec.ts
+| | | | └── jest-e2e.json
+| | | └── tsconfig.app.json
 | | ├── eslint.config.mjs
 | | ├── jest.config.ts
 | | ├── nest-cli.json
 | | ├── package.json
 | | ├── README.md
-| | ├── src
-| | | ├── app.controller.spec.ts
-| | | ├── app.controller.ts
-| | | ├── app.module.ts
-| | | ├── app.service.ts
-| | | ├── auth
-| | | | ├── auth.controller.spec.ts
-| | | | ├── auth.controller.ts
-| | | | ├── auth.module.ts
-| | | | ├── auth.service.spec.ts
-| | | | ├── auth.service.ts
-| | | | ├── config
-| | | | | ├── jwt.config.ts
-| | | | | └── refresh.config.ts
-| | | | ├── decorators
-| | | | | └── get-user.decorator.ts
-| | | | ├── dto
-| | | | | ├── create-auth.dto.ts
-| | | | | └── update-auth.dto.ts
-| | | | ├── entities
-| | | | | └── auth.entity.ts
-| | | | ├── guards
-| | | | | ├── jwt-auth
-| | | | | | ├── jwt-auth.guard.spec.ts
-| | | | | | └── jwt-auth.guard.ts
-| | | | | ├── local-auth
-| | | | | | ├── local-auth.guard.spec.ts
-| | | | | | └── local-auth.guard.ts
-| | | | | └── refresh-auth
-| | | | | ├── refresh-auth.guard.spec.ts
-| | | | | └── refresh-auth.guard.ts
-| | | | ├── interceptor
-| | | | | └── token.interceptor.ts
-| | | | ├── strategies
-| | | | | ├── jwt.strategy.ts
-| | | | | ├── local.strategy.ts
-| | | | | └── refresh-jwt.strategy.ts
-| | | | └── types
-| | | | └── auth-jwt-payload.d.ts
-| | | ├── bookmarks
-| | | | ├── bookmarks.controller.spec.ts
-| | | | ├── bookmarks.controller.ts
-| | | | ├── bookmarks.module.ts
-| | | | ├── bookmarks.service.spec.ts
-| | | | ├── bookmarks.service.ts
-| | | | └── entities
-| | | | ├── hashtag.entity.ts
-| | | | ├── post-hashtag.entity.ts
-| | | | └── saved-post.entity.ts
-| | | ├── common
-| | | | ├── filter
-| | | | | └── all-exception
-| | | | | ├── all-exception.filter.spec.ts
-| | | | | └── all-exception.filter.ts
-| | | | ├── interceptor
-| | | | | ├── timeout
-| | | | | | ├── timeout.interceptor.spec.ts
-| | | | | | └── timeout.interceptor.ts
-| | | | | └── transform
-| | | | | ├── transform.interceptor.spec.ts
-| | | | | └── transform.interceptor.ts
-| | | | └── middleware
-| | | | └── logger
-| | | | ├── logger.middleware.spec.ts
-| | | | └── logger.middleware.ts
-| | | ├── config
-| | | | ├── db.config.ts
-| | | | └── env.config.ts
-| | | ├── database
-| | | | ├── data-source.ts
-| | | | ├── database.module.ts
-| | | | ├── factories
-| | | | | ├── auth.factory.ts
-| | | | | ├── comment.factory.ts
-| | | | | ├── hashtag.factory.ts
-| | | | | ├── post-media.factory.ts
-| | | | | ├── post.factory.ts
-| | | | | ├── story.factory.ts
-| | | | | └── user.factory.ts
-| | | | ├── migrations
-| | | | | └── 1775741091591-InitSchema.ts
-| | | | ├── seed.ts
-| | | | └── seeds
-| | | | └── main.seeder.ts
-| | | ├── main.ts
-| | | ├── posts
-| | | | ├── dto
-| | | | | ├── create-post.dto.ts
-| | | | | └── update-post.dto.ts
-| | | | ├── entities
-| | | | | ├── post-media.entity.ts
-| | | | | └── post.entity.ts
-| | | | ├── posts.controller.spec.ts
-| | | | ├── posts.controller.ts
-| | | | ├── posts.module.ts
-| | | | ├── posts.service.spec.ts
-| | | | └── posts.service.ts
-| | | ├── social
-| | | | ├── entities
-| | | | | ├── comment.entity.ts
-| | | | | ├── follow.entity.ts
-| | | | | └── like.entity.ts
-| | | | ├── social.controller.spec.ts
-| | | | ├── social.controller.ts
-| | | | ├── social.module.ts
-| | | | ├── social.service.spec.ts
-| | | | └── social.service.ts
-| | | ├── stories
-| | | | ├── dto
-| | | | | ├── create-story.dto.ts
-| | | | | └── update-story.dto.ts
-| | | | ├── entities
-| | | | | └── story.entity.ts
-| | | | ├── stories.controller.spec.ts
-| | | | ├── stories.controller.ts
-| | | | ├── stories.module.ts
-| | | | ├── stories.service.spec.ts
-| | | | └── stories.service.ts
-| | | └── user
-| | | ├── dto
-| | | | ├── create-user.dto.ts
-| | | | └── update-user.dto.ts
-| | | ├── entities
-| | | | └── user.entity.ts
-| | | ├── user.controller.spec.ts
-| | | ├── user.controller.ts
-| | | ├── user.module.ts
-| | | ├── user.service.spec.ts
-| | | └── user.service.ts
-| | ├── test
-| | | ├── app.e2e-spec.ts
-| | | └── jest-e2e.json
 | | ├── tsconfig.build.json
 | | └── tsconfig.json
 | └── web
 | ├── app
 | | ├── (protected)
+| | | ├── account-settings
+| | | | ├── components
+| | | | | └── settings-card.tsx
+| | | | └── page.tsx
 | | | ├── components
-| | | | └── app-sidebar.tsx
+| | | | ├── app-sidebar.tsx
+| | | | ├── create-post-modal.tsx
+| | | | ├── edit-post-modal.tsx
+| | | | └── post-options-menu.tsx
+| | | ├── explore
+| | | | ├── page.tsx
+| | | | └── [id]
+| | | | └── page.tsx
 | | | ├── fyp
+| | | | ├── components
+| | | | | ├── comment-section.tsx
+| | | | | └── post-item.tsx
 | | | | └── page.tsx
 | | | ├── layout.tsx
 | | | └── profile
+| | | ├── components
+| | | | ├── profile-actions.tsx
+| | | | ├── profile-card.tsx
+| | | | ├── profile-header.tsx
+| | | | ├── profile-posts.tsx
+| | | | └── profile-stats.tsx
+| | | └── [userName]
+| | | ├── loading.tsx
 | | | └── page.tsx
+| | ├── api
+| | | ├── auth
+| | | | ├── refresh
+| | | | | └── route.ts
+| | | | ├── signin
+| | | | | └── route.ts
+| | | | ├── signout
+| | | | | └── route.ts
+| | | | └── signup
+| | | | └── route.ts
+| | | └── [...path]
+| | | └── route.ts
 | | ├── auth
 | | | ├── components
 | | | | ├── login-form.tsx
@@ -174,20 +200,6 @@
 | ├── components.json
 | ├── config
 | | └── env.config.ts
-| ├── coverage
-| | ├── clover.xml
-| | ├── coverage-final.json
-| | ├── lcov-report
-| | | ├── base.css
-| | | ├── block-navigation.js
-| | | ├── favicon.png
-| | | ├── index.html
-| | | ├── page.tsx.html
-| | | ├── prettify.css
-| | | ├── prettify.js
-| | | ├── sort-arrow-sprite.png
-| | | └── sorter.js
-| | └── lcov.info
 | ├── eslint.config.js
 | ├── hooks
 | ├── jest.config.ts
@@ -225,6 +237,11 @@
 | | | ├── nest.ts
 | | | └── next.ts
 | | └── tsconfig.json
+| ├── types
+| | ├── package.json
+| | ├── src
+| | | └── index.ts
+| | └── tsconfig.json
 | ├── typescript-config
 | | ├── base.json
 | | ├── nestjs.json
@@ -239,9 +256,11 @@
 | ├── postcss.config.mjs
 | ├── src
 | | ├── components
+| | | ├── alert-dialog.tsx
 | | | ├── avatar.tsx
 | | | ├── button.tsx
 | | | ├── card.tsx
+| | | ├── dialog.tsx
 | | | ├── dropdown-menu.tsx
 | | | ├── field.tsx
 | | | ├── input.tsx
@@ -250,6 +269,7 @@
 | | | ├── sheet.tsx
 | | | ├── sidebar.tsx
 | | | ├── skeleton.tsx
+| | | ├── textarea.tsx
 | | | └── tooltip.tsx
 | | ├── hooks
 | | | └── use-mobile.ts
@@ -263,13 +283,6 @@
 ├── pnpm-workspace.yaml
 ├── README.md
 ├── structure.md
-├── tools
-| └── db
-| ├── archives
-| | ├── backup_20260411184446.sql
-| | └── backup_20260413081203.sql
-| ├── backup.bat
-| └── rollback.bat
 ├── tsconfig.json
 └── turbo.json
 ```

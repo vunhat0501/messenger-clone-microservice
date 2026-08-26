@@ -5,8 +5,12 @@
     "baseUrl": "./",
     "outDir": "./dist",
     "paths": {
-      "@workspace/types": ["../../packages/types"],
-      "@/*": ["src/*"]
+      "@/*": [
+        "src/*"
+      ],
+      "@workspace/types": [
+        "../../packages/types"
+      ]
     }
   }
 }

@@ -1,7 +1,8 @@
 services:
+    # add container for mongodb, rabbitmq management, redis
     db:
         image: postgres:18-alpine
-        container_name: typeorm_postgres
+        container_name: auth_postgres
         restart: always
         environment:
             POSTGRES_USER: ${DB_USER}
