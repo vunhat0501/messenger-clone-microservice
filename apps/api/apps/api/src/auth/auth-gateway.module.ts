@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { GatewayAuthController } from 'apps/api/src/auth/auth-gateway.controller';
+import { env } from 'apps/api/src/config/env.config';
 
 @Module({
   imports: [
@@ -9,7 +10,7 @@ import { GatewayAuthController } from 'apps/api/src/auth/auth-gateway.controller
         name: 'AUTH_SERVICE',
         transport: Transport.RMQ,
         options: {
-          urls: ['amqp://localhost:5672'],
+          urls: [env.RABBITMQ_URL],
           queue: 'auth_queue',
           queueOptions: { durable: false },
         },

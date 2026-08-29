@@ -1,6 +1,6 @@
 services:
     # add container for mongodb, rabbitmq management, redis
-    db:
+    postgres:
         image: postgres:18-alpine
         container_name: auth_postgres
         restart: always
@@ -11,7 +11,44 @@ services:
         ports:
             - 5432:5432
         volumes:
-            - postgres:/var/lib/postgresql
+            - postgres_data:/var/lib/postgresql
+    mongo:
+        image: mongo:8.3.8
+        container_name: chat_mongo
+        restart: always
+        environment:
+            MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER}
+            MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASS}
+        ports:
+            - 27017:27017
+        volumes:
+            - mongo_data:/data/db
+
+    rabbitmq:
+        image: rabbitmq:4.3.5-management-alpine
+        container_name: app_rabbitmq
+        restart: always
+        environment:
+            RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+            RABBITMQ_DEFAULT_PASSWORD: ${RABBITMQ_PASS}
+        ports:
+            - 5672:5672
+            - 15672:15672
+        volumes:
+            - rabbitmq_data:/var/lib/rabbitmq
+
+    redis:
+        image: redis:8.10-alpine
+        container_name: app_redis
+        restart: unless-stopped
+        ports:
+            - 6379:6379
+        command: ["redis-server", "--appendonly", "yes"]
+        volumes:
+            - redis_data:/data
 
 volumes:
-    postgres:
+    postgres_data:
+    mongo_data:
+    rabbitmq_data:
+    redis_data:

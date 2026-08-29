@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { ChatGateway } from 'apps/api/src/chat/gateway/chat.gateway';
+import { env } from 'apps/api/src/config/env.config';
 
 @Module({
   imports: [
@@ -9,7 +10,7 @@ import { ChatGateway } from 'apps/api/src/chat/gateway/chat.gateway';
         name: 'CHAT_SERVICE',
         transport: Transport.RMQ,
         options: {
-          urls: ['amqp://localhost:5672'],
+          urls: [env.RABBITMQ_URL],
           queue: 'chat_queue',
           queueOptions: { durable: false },
         },
