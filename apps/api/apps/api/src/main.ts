@@ -4,6 +4,7 @@ import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import cookieParser from 'cookie-parser';
 import { env } from 'apps/api/src/config/env.config';
+import { RedisIoAdapter } from 'apps/api/src/common/adapter/redis-io.adapter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -19,6 +20,8 @@ async function bootstrap() {
       whitelist: true,
     }),
   );
+  const redisIoAdapter = new RedisIoAdapter(app);
+  await redisIoAdapter.connectToRedis();
   await app.listen(process.env.PORT ?? 8008);
 }
 bootstrap();
