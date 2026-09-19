@@ -6,8 +6,8 @@
     "declarationMap": true,
     "esModuleInterop": true,
     "incremental": false,
-    "module": "commonjs",
-    "moduleResolution": "node10",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
     "outDir": "dist",
     "rootDir": "src"
   },

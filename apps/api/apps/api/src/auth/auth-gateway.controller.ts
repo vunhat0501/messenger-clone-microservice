@@ -51,9 +51,7 @@ export class GatewayAuthController {
 
   @Post('signout')
   @UseGuards(JwtAuthGuard)
-  async signOut(@GetUser('id') userId: number) {
-    this.authClient.emit('auth.signout', userId);
-
-    return { success: true };
+  signOut(@GetUser('id') userId: number) {
+    return this.authClient.send('auth.signout', userId);
   }
 }

@@ -20,7 +20,15 @@ export async function POST(req: NextRequest) {
     if (!backendRes.ok) {
       return NextResponse.json(data, { status: backendRes.status });
     }
-    const response = NextResponse.json({ success: true });
+    const response = NextResponse.json({
+      success: true,
+      data: {
+        id: data.data?.id,
+        name: data.data?.name,
+        email: data.data?.email,
+        role: data.data?.role,
+      },
+    });
     const accessToken = data.data?.accessToken;
     const refreshToken = data.data?.refreshToken;
     const cookieStore = await cookies();
