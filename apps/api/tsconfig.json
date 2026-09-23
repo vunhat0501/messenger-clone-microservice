@@ -4,13 +4,13 @@
     "ignoreDeprecations": "5.0",
     "baseUrl": "./",
     "outDir": "./dist",
+    "declaration": true,
+    "declarationMap": false,
     "paths": {
-      "@/*": [
-        "src/*"
-      ],
-      "@workspace/types": [
-        "../../packages/types"
-      ]
+      "@/*": ["apps/api/src/*"],
+      "@auth/*": ["apps/auth-service/src/*"],
+      "@chat/*": ["apps/chat-service/src/*"],
+      "@workspace/types": ["../../packages/types"]
     }
   }
 }

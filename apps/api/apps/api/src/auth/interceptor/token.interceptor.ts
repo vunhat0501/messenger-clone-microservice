@@ -6,9 +6,9 @@ import {
   Injectable,
   NestInterceptor,
 } from '@nestjs/common';
+import { env } from 'apps/api/src/config/env.config';
 import { Response } from 'express';
 import { map, Observable } from 'rxjs';
-import { env } from '@/config/env.config';
 
 @Injectable()
 export class TokenInterceptor implements NestInterceptor {

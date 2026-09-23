@@ -34,7 +34,6 @@ import { GatewayUserModule } from 'apps/api/src/users/users-gateway.module';
       provide: APP_INTERCEPTOR,
       useClass: TimeoutInterceptor,
     },
-    ChatGateway,
   ],
 })
 export class AppModule implements NestModule {

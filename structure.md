@@ -11,6 +11,8 @@
 | | | | | ├── app.module.ts
 | | | | | ├── app.service.ts
 | | | | | ├── auth
+| | | | | | ├── auth-gateway.controller.ts
+| | | | | | ├── auth-gateway.module.ts
 | | | | | | ├── config
 | | | | | | | ├── jwt.config.ts
 | | | | | | | └── refresh.config.ts
@@ -39,7 +41,14 @@
 | | | | | | | └── refresh-jwt.strategy.ts
 | | | | | | └── types
 | | | | | | └── auth-jwt-payload.d.ts
+| | | | | ├── chat
+| | | | | | ├── chat-gateway.module.ts
+| | | | | | └── gateway
+| | | | | | ├── chat.gateway.spec.ts
+| | | | | | └── chat.gateway.ts
 | | | | | ├── common
+| | | | | | ├── adapter
+| | | | | | | └── redis-io.adapter.ts
 | | | | | | ├── filter
 | | | | | | | └── all-exception
 | | | | | | | ├── all-exception.filter.spec.ts
@@ -57,20 +66,16 @@
 | | | | | | └── logger.middleware.ts
 | | | | | ├── config
 | | | | | | └── env.config.ts
-| | | | | └── main.ts
+| | | | | ├── main.ts
+| | | | | └── users
+| | | | | ├── users-gateway.controller.ts
+| | | | | └── users-gateway.module.ts
 | | | | ├── test
 | | | | | ├── app.e2e-spec.ts
 | | | | | └── jest-e2e.json
 | | | | └── tsconfig.app.json
 | | | ├── auth-service
-| | | | ├── social
-| | | | | ├── entities
-| | | | | | └── follow.entity.ts
-| | | | | ├── social.controller.spec.ts
-| | | | | ├── social.controller.ts
-| | | | | ├── social.module.ts
-| | | | | ├── social.service.spec.ts
-| | | | | └── social.service.ts
+| | | | ├── nest-cli.json
 | | | | ├── src
 | | | | | ├── auth
 | | | | | | ├── auth.controller.spec.ts
@@ -87,6 +92,11 @@
 | | | | | ├── auth-service.controller.ts
 | | | | | ├── auth-service.module.ts
 | | | | | ├── auth-service.service.ts
+| | | | | ├── common
+| | | | | | └── filter
+| | | | | | └── rpc-exception
+| | | | | | ├── rpc-exception.filter.spec.ts
+| | | | | | └── rpc-exception.filter.ts
 | | | | | ├── config
 | | | | | | └── postgres.config.ts
 | | | | | ├── database
@@ -117,11 +127,24 @@
 | | | | | └── jest-e2e.json
 | | | | └── tsconfig.app.json
 | | | └── chat-service
+| | | ├── nest-cli.json
 | | | ├── src
 | | | | ├── chat-service.controller.spec.ts
 | | | | ├── chat-service.controller.ts
 | | | | ├── chat-service.module.ts
 | | | | ├── chat-service.service.ts
+| | | | ├── common
+| | | | | └── filter
+| | | | | └── rpc-exception
+| | | | | ├── rpc-exception.filter.spec.ts
+| | | | | └── rpc-exception.filter.ts
+| | | | ├── config
+| | | | | └── mongo.config.ts
+| | | | ├── database
+| | | | | ├── mongo-database.module.ts
+| | | | | └── schemas
+| | | | | ├── conversation.schema.ts
+| | | | | └── participant.schema.ts
 | | | | └── main.ts
 | | | ├── test
 | | | | ├── app.e2e-spec.ts

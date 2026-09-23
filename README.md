@@ -220,3 +220,92 @@ export default function MyPage() {
   return <Button>Click Me</Button>;
 }
 ```
+
+```mermaid
+flowchart TB
+  classDef client fill:#f9f9f9,stroke:#333,stroke-width:2px,color:black;
+  classDef edge fill:#e1e1e1,stroke:#333,stroke-width:2px,color:black;
+  classDef gateway fill:#d4e6f1,stroke:#333,stroke-width:2px,color:black;
+  classDef broker fill:#fcf3cf,stroke:#333,stroke-width:2px,color:black;
+  classDef service fill:#f2d7d5,stroke:#333,stroke-width:2px,color:black;
+  classDef cache fill:#fdebd0,stroke:#333,stroke-width:2px,color:black;
+  classDef db fill:#d5f5e3,stroke:#333,stroke-width:2px,color:black;
+
+  Client([Client Application]):::client
+
+  subgraph Edge ["Edge / Entry Tier"]
+    LB{Load Balancer}:::edge
+  end
+
+  subgraph Gateways ["Gateway Tier (Scaled Instances)"]
+    direction LR
+    GW1[API & WS Gateway - Instance 1]:::gateway
+    GW2[API & WS Gateway - Instance 2]:::gateway
+  end
+
+  subgraph Infrastructure ["Shared Infrastructure"]
+    PubSub[(Pub/Sub Cache for WebSockets)]:::cache
+    Broker[[Message Broker / Event Bus]]:::broker
+  end
+
+  subgraph Services ["Microservices Tier"]
+    direction LR
+    AuthSvc[Identity & User Service]:::service
+    ChatSvc[Chat Service]:::service
+  end
+
+  subgraph Caching ["Caching Tier"]
+    DataCache[(Distributed Data Cache)]:::cache
+  end
+
+  subgraph Databases ["Database Tier"]
+    subgraph RelationalDB ["Relational Database Cluster"]
+      SQL_Pri[(Primary Node)]:::db
+      SQL_Rep[(Read Replica)]:::db
+    end
+
+    subgraph DocumentDB ["Document Database Cluster"]
+      NoSQL_Pri[(Primary Node)]:::db
+      NoSQL_Rep[(Read Replica)]:::db
+    end
+  end
+
+  %% Client to Edge
+  Client -->|HTTP / WebSockets| LB
+
+  %% Load Balancing to Gateways
+  LB --> GW1
+  LB --> GW2
+
+  %% Gateway WebSocket Syncing
+  GW1 <-->|State Sync| PubSub
+  GW2 <-->|State Sync| PubSub
+
+  %% Gateway to Microservices via Broker
+  GW1 <-->|RPC Messages| Broker
+  GW2 <-->|RPC Messages| Broker
+
+  Broker <--> AuthSvc
+  Broker <--> ChatSvc
+
+  %% Services to Data Cache
+  AuthSvc <-->|Cache Check / Update| DataCache
+  ChatSvc <-->|Cache Check / Update| DataCache
+
+  %% Services to Relational Database
+  AuthSvc -->|Writes| SQL_Pri
+  AuthSvc -->|Reads| SQL_Rep
+  SQL_Pri -.->|Async Replication| SQL_Rep
+
+  %% Services to Document Database
+  ChatSvc -->|Writes| NoSQL_Pri
+  ChatSvc -->|Reads| NoSQL_Rep
+  NoSQL_Pri -.->|Async Replication| NoSQL_Rep
+```
+
+**Note**: If you can't connect to RabbitMQ or get No_Authorized in rabbitmq management. Run following command
+
+```shell
+docker-compose rm -s -v rabbitmq
+docker-compose up -d
+```

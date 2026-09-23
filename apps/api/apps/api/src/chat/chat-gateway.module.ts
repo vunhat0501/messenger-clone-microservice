@@ -12,7 +12,7 @@ import { env } from 'apps/api/src/config/env.config';
         options: {
           urls: [env.RABBITMQ_URL],
           queue: 'chat_queue',
-          queueOptions: { durable: false },
+          queueOptions: { durable: true },
         },
       },
     ]),

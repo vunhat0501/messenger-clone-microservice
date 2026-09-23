@@ -12,7 +12,7 @@ import { GatewayUsersController } from 'apps/api/src/users/users-gateway.control
         options: {
           urls: [env.RABBITMQ_URL],
           queue: 'auth_queue',
-          queueOptions: { durable: false },
+          queueOptions: { durable: true },
         },
       },
     ]),
