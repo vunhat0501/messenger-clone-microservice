@@ -19,6 +19,7 @@
         "tsConfigPath": "apps/api/tsconfig.app.json"
       }
     },
+
     "auth-service": {
       "type": "application",
       "root": "apps/auth-service",

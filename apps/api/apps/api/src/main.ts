@@ -9,7 +9,9 @@ import { RedisIoAdapter } from 'apps/api/src/common/adapter/redis-io.adapter';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.enableCors({
-    origin: `${env.FRONTEND_URL}`,
+    origin: (origin, callback) => {
+      callback(null, true);
+    },
     credentials: true,
   });
   app.use(cookieParser());
@@ -22,6 +24,10 @@ async function bootstrap() {
   );
   const redisIoAdapter = new RedisIoAdapter(app);
   await redisIoAdapter.connectToRedis();
-  await app.listen(process.env.PORT ?? 8008);
+  app.useWebSocketAdapter(redisIoAdapter);
+
+  const port = process.env.PORT ?? 8008;
+  await app.listen(port);
+  console.log(`API Gateway is running on port ${port}`);
 }
 bootstrap();

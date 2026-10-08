@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 async function proxyRequest(
   req: NextRequest,
-  { params }: { params: { path: string[] } },
+  { params }: { params: Promise<{ path: string[] }> },
 ) {
   try {
     const resolvedParams = await params;

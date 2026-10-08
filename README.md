@@ -254,10 +254,6 @@ flowchart TB
     ChatSvc[Chat Service]:::service
   end
 
-  subgraph Caching ["Caching Tier"]
-    DataCache[(Distributed Data Cache)]:::cache
-  end
-
   subgraph Databases ["Database Tier"]
     subgraph RelationalDB ["Relational Database Cluster"]
       SQL_Pri[(Primary Node)]:::db
@@ -287,10 +283,6 @@ flowchart TB
 
   Broker <--> AuthSvc
   Broker <--> ChatSvc
-
-  %% Services to Data Cache
-  AuthSvc <-->|Cache Check / Update| DataCache
-  ChatSvc <-->|Cache Check / Update| DataCache
 
   %% Services to Relational Database
   AuthSvc -->|Writes| SQL_Pri

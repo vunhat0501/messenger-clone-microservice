@@ -22,8 +22,10 @@ export class UserService {
     });
   }
 
-  findAll() {
-    return `This action returns all users`;
+  async findAll() {
+    return await this.userRepository.find({
+      select: ['id', 'userName', 'email', 'avatarUrl', 'bio', 'createdAt'],
+    });
   }
 
   async findOne(userId: number) {

@@ -2,7 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import {
   Participant,
   ParticipantSchema,
-} from 'apps/chat-service/src/database/schemas/participant.schema';
+} from './participant.schema';
 import { HydratedDocument } from 'mongoose';
 
 export type ConversationDocument = HydratedDocument<Conversation>;

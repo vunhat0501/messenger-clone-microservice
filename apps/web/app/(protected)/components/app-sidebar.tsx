@@ -7,6 +7,7 @@ import {
   Settings,
   LogOut,
   ChevronsUpDown,
+  MessageSquare,
   Hash,
   PlusCircle,
 } from 'lucide-react';
@@ -59,6 +60,7 @@ export function AppSidebar() {
   const navItems = [
     { title: 'For You', url: '/fyp', icon: Sparkles },
     { title: 'Explore', url: '/explore', icon: Hash },
+    { title: 'Messages', url: '/messages', icon: MessageSquare },
     {
       title: 'Profile',
       url: isMounted && user?.name ? `/profile/${user.name}` : '/profile',

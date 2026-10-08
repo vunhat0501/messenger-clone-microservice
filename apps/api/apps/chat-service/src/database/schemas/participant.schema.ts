@@ -5,7 +5,7 @@ export class Participant {
   @Prop({ type: Number, required: true, index: true })
   userId: number;
 
-  @Prop({ require: true })
+  @Prop({ required: true })
   userName: string;
 
   @Prop({ required: false })
