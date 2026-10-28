@@ -1,15 +1,11 @@
-import type { Metadata } from 'next';
-import { ChatContainer } from '@/app/(protected)/messages/components/ChatContainer';
 import React from 'react';
+import { ChatContainer } from './components/ChatContainer';
 
-export const metadata: Metadata = {
-  title: 'Messages',
+export const metadata = {
+  title: 'Messages | Social App',
+  description: 'Real-time chatting with load balanced gateways and WebSocket',
 };
 
 export default function MessagesPage() {
-  return (
-    <div className="flex h-[calc(100vh-6rem)] w-full gap-4 overflow-hidden rounded-xl border bg-background shadow-sm">
-      <ChatContainer />
-    </div>
-  );
+  return <ChatContainer />;
 }

@@ -28,3 +28,5 @@ export interface UserSummary {
   email?: string;
   avatarUrl?: string;
 }
+
+export type SocketStatus = 'connected' | 'connecting' | 'disconnected';

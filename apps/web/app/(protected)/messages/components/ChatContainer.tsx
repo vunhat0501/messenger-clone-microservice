@@ -7,10 +7,11 @@ import { io, Socket } from 'socket.io-client';
 import {
   ChatMessage,
   ConversationItem,
+  SocketStatus,
   UserSummary,
-} from '@/app/(protected)/messages/type';
-import { ChatSidebar } from '@/app/(protected)/messages/components/ChatSidebar';
-import { ChatArea } from '@/app/(protected)/messages/components/ChatArea';
+} from '../type';
+import { ChatSidebar } from './ChatSidebar';
+import { ChatArea } from './ChatArea';
 
 export function ChatContainer() {
   const { user } = useAuthStore();
@@ -18,12 +19,15 @@ export function ChatContainer() {
   const [activeConversation, setActiveConversation] =
     useState<ConversationItem | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
   const [availableUsers, setAvailableUsers] = useState<UserSummary[]>([]);
+  const [isNewChatOpen, setIsNewChatOpen] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
-  const [socketStatus, setSocketStatus] = useState<
-    'connected' | 'connecting' | 'disconnected'
-  >('connecting');
+  const [socketStatus, setSocketStatus] = useState<SocketStatus>('connecting');
+  const [isDisconnected, setIsDisconnected] = useState(false);
 
+  // Gateway switcher for demo purposes (Nginx load balancer default, or direct gateway instances)
   const [selectedGateway, setSelectedGateway] = useState<string>(
     typeof window !== 'undefined'
       ? process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:80'
@@ -31,14 +35,30 @@ export function ChatContainer() {
   );
 
   const socketRef = useRef<Socket | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const activeConversationRef = useRef<ConversationItem | null>(null);
 
+  useEffect(() => {
+    activeConversationRef.current = activeConversation;
+  }, [activeConversation]);
+
+  // Auto scroll to latest message
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  // Load conversations
   const loadConversations = async () => {
     try {
       const res = await api.get('/chat/conversations');
       const data = res.data?.data || res.data || [];
       if (Array.isArray(data)) {
         setConversations(data);
-        if (data.length > 0 && !activeConversation) {
+        if (data.length > 0 && !activeConversationRef.current) {
           setActiveConversation(data[0]);
         }
       }
@@ -47,6 +67,7 @@ export function ChatContainer() {
     }
   };
 
+  // Load available users for starting chat
   const loadAvailableUsers = async () => {
     try {
       const res = await api.get('/users');
@@ -59,6 +80,7 @@ export function ChatContainer() {
     }
   };
 
+  // Load messages for active conversation
   const loadMessages = async (conversationId: string) => {
     setIsLoadingMessages(true);
     try {
@@ -76,11 +98,21 @@ export function ChatContainer() {
     }
   };
 
+  // Initialize Socket.IO connection
   useEffect(() => {
-    if (!user) return;
+    if (!user || isDisconnected) {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
+      setSocketStatus('disconnected');
+      return;
+    }
+
     let socket: Socket;
 
     const setupSocket = async () => {
+      setSocketStatus('connecting');
       let token = '';
       try {
         const tokenRes = await fetch('/api/auth/token');
@@ -95,31 +127,37 @@ export function ChatContainer() {
         withCredentials: true,
         transports: ['websocket'],
       });
+
       socketRef.current = socket;
 
       socket.on('connect', () => {
         setSocketStatus('connected');
-        if (activeConversation) {
+        if (activeConversationRef.current) {
           socket.emit('joinConversation', {
-            conversationId: activeConversation._id,
+            conversationId: activeConversationRef.current._id,
           });
         }
       });
 
-      socket.on('disconnect', () => setSocketStatus('disconnected'));
-      socket.on('connect_error', () => setSocketStatus('disconnected'));
+      socket.on('disconnect', () => {
+        setSocketStatus('disconnected');
+      });
+
+      socket.on('connect_error', () => {
+        setSocketStatus('disconnected');
+      });
 
       socket.on('newMessage', (incomingMsg: ChatMessage) => {
         if (
-          activeConversation &&
-          incomingMsg.conversationId === activeConversation._id
+          activeConversationRef.current &&
+          incomingMsg.conversationId === activeConversationRef.current._id
         ) {
-          setMessages((prev) =>
-            prev.some((m) => m._id === incomingMsg._id)
-              ? prev
-              : [...prev, incomingMsg],
-          );
+          setMessages((prev) => {
+            if (prev.some((m) => m._id === incomingMsg._id)) return prev;
+            return [...prev, incomingMsg];
+          });
         }
+
         setConversations((prev) =>
           prev.map((c) =>
             c._id === incomingMsg.conversationId
@@ -149,11 +187,15 @@ export function ChatContainer() {
     };
 
     setupSocket();
-    return () => {
-      if (socket) socket.disconnect();
-    };
-  }, [user, selectedGateway, activeConversation]);
 
+    return () => {
+      if (socket) {
+        socket.disconnect();
+      }
+    };
+  }, [user, selectedGateway, isDisconnected]);
+
+  // When active conversation changes, join room & fetch history
   useEffect(() => {
     if (activeConversation) {
       loadMessages(activeConversation._id);
@@ -170,24 +212,56 @@ export function ChatContainer() {
     loadAvailableUsers();
   }, [user]);
 
-  const handleSendMessage = async (text: string) => {
-    if (!activeConversation || !user) return;
-    try {
-      const res = await api.post(
-        `/chat/conversations/${activeConversation._id}/messages`,
-        { text },
+  // Handle sending a message
+  const handleSendMessage = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (isDisconnected || socketStatus !== 'connected') {
+      console.warn('Cannot send message: socket is disconnected');
+      return;
+    }
+    if (!newMessage.trim() || !activeConversation || !user) return;
+
+    const text = newMessage.trim();
+    setNewMessage('');
+
+    if (socketRef.current?.connected) {
+      socketRef.current.emit(
+        'sendMessage',
+        {
+          conversationId: activeConversation._id,
+          text,
+          senderId: user.id,
+        },
+        (savedMsg: ChatMessage) => {
+          if (savedMsg && savedMsg._id) {
+            setMessages((prev) => {
+              if (prev.some((m) => m._id === savedMsg._id)) return prev;
+              return [...prev, savedMsg];
+            });
+          }
+        },
       );
-      const savedMsg = res.data?.data || res.data;
-      if (savedMsg && savedMsg._id) {
-        setMessages((prev) =>
-          prev.some((m) => m._id === savedMsg._id) ? prev : [...prev, savedMsg],
+    } else {
+      try {
+        const res = await api.post(
+          `/chat/conversations/${activeConversation._id}/messages`,
+          { text },
         );
+        const savedMsg = res.data?.data || res.data;
+
+        if (savedMsg && savedMsg._id) {
+          setMessages((prev) => {
+            if (prev.some((m) => m._id === savedMsg._id)) return prev;
+            return [...prev, savedMsg];
+          });
+        }
+      } catch (err) {
+        console.error('Failed to send message:', err);
       }
-    } catch (err) {
-      console.error('Failed to send message:', err);
     }
   };
 
+  // Start new conversation with a selected user
   const handleStartChatWithUser = async (targetUser: UserSummary) => {
     try {
       const res = await api.post('/chat/conversations', {
@@ -195,6 +269,7 @@ export function ChatContainer() {
       });
       const conv = res.data?.data || res.data;
       if (conv) {
+        setIsNewChatOpen(false);
         await loadConversations();
         setActiveConversation(conv);
       }
@@ -203,27 +278,59 @@ export function ChatContainer() {
     }
   };
 
+  const handleDisconnect = () => {
+    setIsDisconnected((prev) => {
+      if (!prev) {
+        if (socketRef.current) {
+          socketRef.current.disconnect();
+        }
+        setSocketStatus('disconnected');
+        return true;
+      }
+      return false;
+    });
+  };
+
+  const handleSelectGateway = (gateway: string) => {
+    setSelectedGateway(gateway);
+    setIsDisconnected(false);
+  };
+
   return (
-    <>
+    <div className="flex h-[calc(100vh-6rem)] w-full gap-4 overflow-hidden rounded-xl border bg-background shadow-sm">
       <ChatSidebar
-        user={user}
         conversations={conversations}
         activeConversation={activeConversation}
-        setActiveConversation={setActiveConversation}
+        onSelectConversation={setActiveConversation}
         availableUsers={availableUsers}
-        handleStartChatWithUser={handleStartChatWithUser}
-        socketStatus={socketStatus}
+        onStartChatWithUser={handleStartChatWithUser}
+        isNewChatOpen={isNewChatOpen}
+        setIsNewChatOpen={setIsNewChatOpen}
+        searchTerm={searchTerm}
+        setSearchTerm={setSearchTerm}
         selectedGateway={selectedGateway}
-        setSelectedGateway={setSelectedGateway}
+        onSelectGateway={handleSelectGateway}
+        socketStatus={socketStatus}
+        isDisconnected={isDisconnected}
+        onDisconnect={handleDisconnect}
+        currentUserId={user?.id}
+        currentUserName={user?.name}
       />
+
       <ChatArea
-        user={user}
         activeConversation={activeConversation}
         messages={messages}
         isLoadingMessages={isLoadingMessages}
-        handleSendMessage={handleSendMessage}
+        newMessage={newMessage}
+        setNewMessage={setNewMessage}
+        onSendMessage={handleSendMessage}
         selectedGateway={selectedGateway}
+        isDisconnected={isDisconnected}
+        socketStatus={socketStatus}
+        currentUserId={user?.id}
+        currentUserName={user?.name}
+        messagesEndRef={messagesEndRef}
       />
-    </>
+    </div>
   );
 }

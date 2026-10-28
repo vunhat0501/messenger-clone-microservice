@@ -46,7 +46,7 @@ export class GatewayAuthController {
   @Get('me')
   @UseGuards(JwtAuthGuard)
   getMe(@GetUser() user: AuthenticatedUser) {
-    return { data: user };
+    return user;
   }
 
   @Post('signout')

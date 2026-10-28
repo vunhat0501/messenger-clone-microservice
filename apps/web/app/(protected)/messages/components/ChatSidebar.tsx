@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Avatar,
   AvatarFallback,
@@ -19,46 +19,85 @@ import { Plus, Search, MessageSquare, Circle, Server } from 'lucide-react';
 import {
   ConversationItem,
   Participant,
+  SocketStatus,
   UserSummary,
-} from '@/app/(protected)/messages/type';
+} from '../type';
 
 interface ChatSidebarProps {
-  user: any;
   conversations: ConversationItem[];
   activeConversation: ConversationItem | null;
-  setActiveConversation: (conv: ConversationItem) => void;
+  onSelectConversation: (conv: ConversationItem) => void;
   availableUsers: UserSummary[];
-  handleStartChatWithUser: (user: UserSummary) => void;
-  socketStatus: string;
+  onStartChatWithUser: (user: UserSummary) => Promise<void>;
+  isNewChatOpen: boolean;
+  setIsNewChatOpen: (open: boolean) => void;
+  searchTerm: string;
+  setSearchTerm: (term: string) => void;
   selectedGateway: string;
-  setSelectedGateway: (gw: string) => void;
+  onSelectGateway: (gateway: string) => void;
+  socketStatus: SocketStatus;
+  isDisconnected: boolean;
+  onDisconnect: () => void;
+  currentUserId?: number;
+  currentUserName?: string;
 }
 
 export function ChatSidebar({
-  user,
   conversations,
   activeConversation,
-  setActiveConversation,
+  onSelectConversation,
   availableUsers,
-  handleStartChatWithUser,
-  socketStatus,
+  onStartChatWithUser,
+  isNewChatOpen,
+  setIsNewChatOpen,
+  searchTerm,
+  setSearchTerm,
   selectedGateway,
-  setSelectedGateway,
+  onSelectGateway,
+  socketStatus,
+  isDisconnected,
+  onDisconnect,
+  currentUserId,
+  currentUserName,
 }: ChatSidebarProps) {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [isNewChatOpen, setIsNewChatOpen] = useState(false);
-
   const getOtherParticipant = (conv: ConversationItem): Participant => {
-    if (conv.participants && user) {
-      const other = conv.participants.find((p) => p.userId !== user.id);
+    if (conv.participants && conv.participants.length > 0) {
+      const other = conv.participants.find((p) => {
+        const idMatches =
+          currentUserId != null && Number(p.userId) === Number(currentUserId);
+        const nameMatches = Boolean(
+          currentUserName &&
+          p.userName?.trim().toLowerCase() ===
+            currentUserName?.trim().toLowerCase(),
+        );
+        return !idMatches && !nameMatches;
+      });
       if (other) return other;
+
+      if (conv.participants.length > 1) {
+        const firstIsMe =
+          (currentUserId != null &&
+            Number(conv.participants[0].userId) === Number(currentUserId)) ||
+          Boolean(
+            currentUserName &&
+            conv.participants[0].userName?.trim().toLowerCase() ===
+              currentUserName?.trim().toLowerCase(),
+          );
+        return firstIsMe ? conv.participants[1] : conv.participants[0];
+      }
     }
-    return conv.participants?.[0] || { userId: 0, userName: 'Chat' };
+    return (
+      conv.participants?.[0] || {
+        userId: 0,
+        userName: 'Chat',
+        avatarUrl: undefined,
+      }
+    );
   };
 
   const filteredConversations = conversations.filter((c) => {
     const other = getOtherParticipant(c);
-    const title = c.isGroup ? c.groupName : other.userName;
+    const title = c.isGroup && c.groupName ? c.groupName : other.userName;
     return title?.toLowerCase().includes(searchTerm.toLowerCase());
   });
 
@@ -85,33 +124,45 @@ export function ChatSidebar({
               <DialogTitle>Start a New Conversation</DialogTitle>
             </DialogHeader>
             <div className="mt-2 space-y-2">
+              <p className="text-xs text-muted-foreground">
+                Select a user to begin chatting:
+              </p>
               <div className="max-h-60 overflow-y-auto space-y-1">
-                {availableUsers.map((u) => (
-                  <button
-                    key={u.id}
-                    onClick={() => {
-                      handleStartChatWithUser(u);
-                      setIsNewChatOpen(false);
-                    }}
-                    className="flex w-full items-center gap-3 rounded-lg p-2.5 text-left transition hover:bg-muted"
-                  >
-                    <Avatar className="h-9 w-9">
-                      <AvatarImage src={u.avatarUrl} />
-                      <AvatarFallback>
-                        {u.userName.substring(0, 2).toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="flex flex-col">
-                      <span className="font-medium text-sm">{u.userName}</span>
-                    </div>
-                  </button>
-                ))}
+                {availableUsers.length === 0 ? (
+                  <div className="p-4 text-center text-sm text-muted-foreground">
+                    No other users found.
+                  </div>
+                ) : (
+                  availableUsers.map((u) => (
+                    <button
+                      key={u.id}
+                      onClick={() => onStartChatWithUser(u)}
+                      className="flex w-full items-center gap-3 rounded-lg p-2.5 text-left transition hover:bg-muted"
+                    >
+                      <Avatar className="h-9 w-9">
+                        <AvatarImage src={u.avatarUrl} />
+                        <AvatarFallback>
+                          {u.userName.substring(0, 2).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="flex flex-col">
+                        <span className="font-medium text-sm">
+                          {u.userName}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {u.email || `User #${u.id}`}
+                        </span>
+                      </div>
+                    </button>
+                  ))
+                )}
               </div>
             </div>
           </DialogContent>
         </Dialog>
       </div>
 
+      {/* Search */}
       <div className="p-3 border-b">
         <div className="relative">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -124,43 +175,76 @@ export function ChatSidebar({
         </div>
       </div>
 
+      {/* Conversation list */}
       <div className="flex-1 overflow-y-auto p-2 space-y-1">
-        {filteredConversations.map((conv) => {
-          const other = getOtherParticipant(conv);
-          const title = conv.isGroup ? conv.groupName : other.userName;
-          const isSelected = activeConversation?._id === conv._id;
+        {filteredConversations.length === 0 ? (
+          <div className="p-6 text-center text-sm text-muted-foreground">
+            No conversations yet. Start one!
+          </div>
+        ) : (
+          filteredConversations.map((conv) => {
+            const other = getOtherParticipant(conv);
+            const title =
+              conv.isGroup && conv.groupName ? conv.groupName : other.userName;
+            const isSelected = activeConversation?._id === conv._id;
 
-          return (
-            <button
-              key={conv._id}
-              onClick={() => setActiveConversation(conv)}
-              className={`flex w-full items-center gap-3 rounded-xl p-3 text-left transition ${
-                isSelected
-                  ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'hover:bg-muted text-foreground'
-              }`}
-            >
-              <Avatar className="h-10 w-10 shrink-0">
-                <AvatarImage src={other.avatarUrl} />
-                <AvatarFallback
-                  className={
-                    isSelected ? 'bg-primary-foreground text-primary' : ''
-                  }
-                >
-                  {title?.substring(0, 2).toUpperCase() || 'CH'}
-                </AvatarFallback>
-              </Avatar>
-              <div className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate font-medium text-sm">{title}</span>
-                <span className="truncate text-xs">
-                  {conv.lastMessageSnippet}
-                </span>
-              </div>
-            </button>
-          );
-        })}
+            return (
+              <button
+                key={conv._id}
+                onClick={() => onSelectConversation(conv)}
+                className={`flex w-full items-center gap-3 rounded-xl p-3 text-left transition ${
+                  isSelected
+                    ? 'bg-primary text-primary-foreground shadow-sm'
+                    : 'hover:bg-muted text-foreground'
+                }`}
+              >
+                <Avatar className="h-10 w-10 shrink-0">
+                  <AvatarImage src={other.avatarUrl} />
+                  <AvatarFallback
+                    className={
+                      isSelected ? 'bg-primary-foreground text-primary' : ''
+                    }
+                  >
+                    {title?.substring(0, 2).toUpperCase() || 'CH'}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <div className="flex items-center justify-between">
+                    <span className="truncate font-medium text-sm">
+                      {title}
+                    </span>
+                    {conv.lastMessageAt && (
+                      <span
+                        className={`text-[10px] ${
+                          isSelected
+                            ? 'text-primary-foreground/70'
+                            : 'text-muted-foreground'
+                        }`}
+                      >
+                        {new Date(conv.lastMessageAt).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                    )}
+                  </div>
+                  <span
+                    className={`truncate text-xs ${
+                      isSelected
+                        ? 'text-primary-foreground/80'
+                        : 'text-muted-foreground'
+                    }`}
+                  >
+                    {conv.lastMessageSnippet || 'No messages yet'}
+                  </span>
+                </div>
+              </button>
+            );
+          })
+        )}
       </div>
 
+      {/* Gateway connection demo bar */}
       <div className="border-t p-3 bg-muted/40">
         <div className="flex items-center justify-between text-xs">
           <div className="flex items-center gap-1.5 font-medium">
@@ -169,29 +253,66 @@ export function ChatSidebar({
           </div>
           <div className="flex items-center gap-1">
             <Circle
-              className={`h-2 w-2 fill-current ${socketStatus === 'connected' ? 'text-emerald-500' : 'text-amber-500'}`}
+              className={`h-2 w-2 fill-current ${
+                !isDisconnected && socketStatus === 'connected'
+                  ? 'text-emerald-500'
+                  : !isDisconnected && socketStatus === 'connecting'
+                    ? 'text-amber-500'
+                    : 'text-rose-500'
+              }`}
             />
-            <span className="text-[11px] capitalize">{socketStatus}</span>
+            <span className="text-[11px] capitalize">
+              {isDisconnected ? 'disconnected' : socketStatus}
+            </span>
           </div>
         </div>
         <div className="mt-2 flex gap-1">
           <button
-            onClick={() => setSelectedGateway('http://localhost:80')}
-            className="flex-1 rounded px-1.5 py-1 text-[10px] bg-muted"
+            onClick={() => onSelectGateway('http://localhost:80')}
+            className={`flex-1 rounded px-1 py-1 text-[10px] font-medium transition ${
+              !isDisconnected &&
+              selectedGateway.includes(':80') &&
+              !selectedGateway.includes(':800')
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-muted hover:bg-muted/80 text-muted-foreground'
+            }`}
           >
             Nginx (:80)
           </button>
           <button
-            onClick={() => setSelectedGateway('http://localhost:8008')}
-            className="flex-1 rounded px-1.5 py-1 text-[10px] bg-muted"
+            onClick={() => onSelectGateway('http://localhost:8008')}
+            className={`flex-1 rounded px-1 py-1 text-[10px] font-medium transition ${
+              !isDisconnected && selectedGateway.includes('8008')
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-muted hover:bg-muted/80 text-muted-foreground'
+            }`}
           >
-            GW 1
+            GW 1 (:8008)
           </button>
           <button
-            onClick={() => setSelectedGateway('http://localhost:8009')}
-            className="flex-1 rounded px-1.5 py-1 text-[10px] bg-muted"
+            onClick={() => onSelectGateway('http://localhost:8009')}
+            className={`flex-1 rounded px-1 py-1 text-[10px] font-medium transition ${
+              !isDisconnected && selectedGateway.includes('8009')
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-muted hover:bg-muted/80 text-muted-foreground'
+            }`}
           >
-            GW 2
+            GW 2 (:8009)
+          </button>
+          <button
+            onClick={onDisconnect}
+            className={`flex-1 rounded px-1 py-1 text-[10px] font-medium transition ${
+              isDisconnected
+                ? 'bg-destructive text-destructive-foreground font-semibold shadow-sm'
+                : 'bg-muted hover:bg-muted/80 text-muted-foreground'
+            }`}
+            title={
+              isDisconnected
+                ? 'Click to reconnect to gateway'
+                : 'Disconnect from WebSocket'
+            }
+          >
+            {isDisconnected ? 'Disconnected' : 'Disconnect'}
           </button>
         </div>
       </div>

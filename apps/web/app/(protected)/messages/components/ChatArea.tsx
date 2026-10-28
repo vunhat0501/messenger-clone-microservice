@@ -1,13 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
-import {
-  Avatar,
-  AvatarFallback,
-  AvatarImage,
-} from '@workspace/ui/components/avatar';
-import { Button } from '@workspace/ui/components/button';
-import { Input } from '@workspace/ui/components/input';
+import React from 'react';
 import {
   MessageGroup,
   Message,
@@ -15,50 +8,83 @@ import {
   MessageContent,
   MessageHeader,
 } from '@workspace/ui/components/message';
+import {
+  Avatar,
+  AvatarFallback,
+  AvatarImage,
+} from '@workspace/ui/components/avatar';
+import { Button } from '@workspace/ui/components/button';
+import { Input } from '@workspace/ui/components/input';
 import { Send, MessageSquare } from 'lucide-react';
 import {
   ChatMessage,
   ConversationItem,
   Participant,
-} from '@/app/(protected)/messages/type';
+  SocketStatus,
+} from '../type';
 
 interface ChatAreaProps {
-  user: any;
   activeConversation: ConversationItem | null;
   messages: ChatMessage[];
   isLoadingMessages: boolean;
-  handleSendMessage: (text: string) => Promise<void>;
+  newMessage: string;
+  setNewMessage: (msg: string) => void;
+  onSendMessage: (e?: React.FormEvent) => Promise<void>;
   selectedGateway: string;
+  isDisconnected: boolean;
+  socketStatus: SocketStatus;
+  currentUserId?: number;
+  currentUserName?: string;
+  messagesEndRef: React.RefObject<HTMLDivElement | null>;
 }
 
 export function ChatArea({
-  user,
   activeConversation,
   messages,
   isLoadingMessages,
-  handleSendMessage,
+  newMessage,
+  setNewMessage,
+  onSendMessage,
   selectedGateway,
+  isDisconnected,
+  socketStatus,
+  currentUserId,
+  currentUserName,
+  messagesEndRef,
 }: ChatAreaProps) {
-  const [newMessage, setNewMessage] = useState('');
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  const onSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newMessage.trim()) return;
-    await handleSendMessage(newMessage);
-    setNewMessage('');
-  };
-
   const getOtherParticipant = (conv: ConversationItem): Participant => {
-    if (conv.participants && user) {
-      const other = conv.participants.find((p) => p.userId !== user.id);
+    if (conv.participants && conv.participants.length > 0) {
+      const other = conv.participants.find((p) => {
+        const idMatches =
+          currentUserId != null && Number(p.userId) === Number(currentUserId);
+        const nameMatches = Boolean(
+          currentUserName &&
+          p.userName?.trim().toLowerCase() ===
+            currentUserName?.trim().toLowerCase(),
+        );
+        return !idMatches && !nameMatches;
+      });
       if (other) return other;
+
+      if (conv.participants.length > 1) {
+        const firstIsMe =
+          (currentUserId != null &&
+            Number(conv.participants[0].userId) === Number(currentUserId)) ||
+          Boolean(
+            currentUserName &&
+            conv.participants[0].userName?.trim().toLowerCase() ===
+              currentUserName?.trim().toLowerCase(),
+          );
+        return firstIsMe ? conv.participants[1] : conv.participants[0];
+      }
     }
-    return conv.participants?.[0] || { userId: 0, userName: 'Chat' };
+    return (
+      conv.participants?.[0] || {
+        userId: 0,
+        userName: 'Chat',
+        avatarUrl: undefined,
+      }
+    );
   };
 
   if (!activeConversation) {
@@ -76,9 +102,16 @@ export function ChatArea({
   }
 
   const otherParticipant = getOtherParticipant(activeConversation);
+  const conversationTitle =
+    activeConversation.isGroup && activeConversation.groupName
+      ? activeConversation.groupName
+      : otherParticipant.userName;
+
+  const isConnected = !isDisconnected && socketStatus === 'connected';
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-background">
+      {/* Header */}
       <div className="flex h-16 items-center justify-between border-b px-6">
         <div className="flex items-center gap-3">
           <Avatar className="h-10 w-10">
@@ -88,31 +121,57 @@ export function ChatArea({
             </AvatarFallback>
           </Avatar>
           <div>
-            <h3 className="font-semibold text-sm">
-              {activeConversation.isGroup
-                ? activeConversation.groupName
-                : otherParticipant.userName}
-            </h3>
+            <h3 className="font-semibold text-sm">{conversationTitle}</h3>
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              <span>Online via {selectedGateway}</span>
+              <span
+                className={`inline-block h-1.5 w-1.5 rounded-full ${
+                  isConnected ? 'bg-emerald-500' : 'bg-rose-500'
+                }`}
+              />
+              <span>
+                {isDisconnected
+                  ? 'Disconnected from WS'
+                  : socketStatus === 'connecting'
+                    ? 'Connecting to gateway...'
+                    : `Online via ${selectedGateway}`}
+              </span>
             </div>
           </div>
         </div>
+
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span className="rounded-md bg-muted px-2 py-1">
+            Room: {activeConversation._id.slice(-6)}
+          </span>
+        </div>
       </div>
 
+      {/* Messages scroll area */}
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
         {isLoadingMessages ? (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            Loading...
+            Loading messages...
+          </div>
+        ) : messages.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted-foreground">
+            <MessageSquare className="mb-2 h-10 w-10 stroke-1 text-muted-foreground/40" />
+            <p>No messages yet in this conversation.</p>
+            <p className="text-xs">Send a message below to start chatting!</p>
           </div>
         ) : (
           <MessageGroup className="space-y-4">
             {messages.map((msg) => {
-              const isMe = msg.senderId === user?.id;
               const sender = activeConversation.participants.find(
-                (p) => p.userId === msg.senderId,
+                (p) => Number(p.userId) === Number(msg.senderId),
               );
+              const isMe =
+                (currentUserId != null &&
+                  Number(msg.senderId) === Number(currentUserId)) ||
+                Boolean(
+                  currentUserName &&
+                  sender?.userName?.trim().toLowerCase() ===
+                    currentUserName?.trim().toLowerCase(),
+                );
               const senderName = isMe
                 ? 'You'
                 : sender?.userName || `User ${msg.senderId}`;
@@ -133,14 +192,28 @@ export function ChatArea({
                       </Avatar>
                     </MessageAvatar>
                   )}
+
                   <MessageContent>
                     <MessageHeader className="mb-1 text-[11px]">
                       <span>{senderName}</span>
+                      <span className="ml-2 text-[10px] text-muted-foreground">
+                        {new Date(msg.createdAt).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
                     </MessageHeader>
+
                     <div
-                      className={`rounded-2xl px-4 py-2.5 text-sm shadow-sm max-w-md ${isMe ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground'}`}
+                      className={`rounded-2xl px-4 py-2.5 text-sm shadow-sm max-w-md ${
+                        isMe
+                          ? 'bg-primary text-primary-foreground rounded-br-xs'
+                          : 'bg-muted text-foreground rounded-bl-xs'
+                      }`}
                     >
-                      <p>{msg.text}</p>
+                      <p className="wrap-break-words leading-relaxed">
+                        {msg.text}
+                      </p>
                     </div>
                   </MessageContent>
                 </Message>
@@ -151,19 +224,38 @@ export function ChatArea({
         )}
       </div>
 
+      {/* Input field */}
       <div className="border-t p-4">
-        <form onSubmit={onSubmit} className="flex gap-2">
+        {isDisconnected && (
+          <div className="mb-3 flex items-center justify-between rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <div className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-destructive animate-pulse" />
+              <span>WebSocket is disconnected. Chatting is disabled.</span>
+            </div>
+            <span className="text-[11px] font-medium opacity-90">
+              Select a gateway in the sidebar to reconnect
+            </span>
+          </div>
+        )}
+        <form onSubmit={onSendMessage} className="flex gap-2">
           <Input
-            placeholder="Type your message..."
+            placeholder={
+              isDisconnected
+                ? 'WebSocket disconnected. Connect to a gateway to chat...'
+                : socketStatus === 'connecting'
+                  ? 'Connecting to gateway...'
+                  : 'Type your message...'
+            }
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
-            className="flex-1 rounded-full px-4"
-            autoFocus
+            disabled={!isConnected}
+            className="flex-1 rounded-full px-4 disabled:opacity-60 disabled:cursor-not-allowed"
+            autoFocus={isConnected}
           />
           <Button
             type="submit"
-            disabled={!newMessage.trim()}
-            className="rounded-full px-4"
+            disabled={!isConnected || !newMessage.trim()}
+            className="rounded-full px-4 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Send className="h-4 w-4 mr-1.5" />
             <span>Send</span>
