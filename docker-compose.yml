@@ -1,6 +1,5 @@
 services:
-    # add container for mongodb, rabbitmq management, redis
-    postgres:
+    postgres_primary:
         image: postgres:18-alpine
         container_name: auth_postgres
         restart: always
@@ -8,14 +7,89 @@ services:
             POSTGRES_USER: ${DB_USER}
             POSTGRES_PASSWORD: ${DB_PASS}
             POSTGRES_DB: ${DB_NAME}
+            PG_REPL_USER: ${PG_REPL_USER:-replicator}
+            PG_REPL_PASSWORD: ${PG_REPL_PASSWORD:?Set PG_REPL_PASSWORD in .env}
+        command:
+            - postgres
+            - -c
+            - wal_level=replica
+            - -c
+            - max_wal_senders=10
+            - -c
+            - max_replication_slots=10
+            - -c
+            - hot_standby=on
         ports:
             - 5432:5432
         volumes:
             - postgres_data:/var/lib/postgresql
-    mongo:
+            - ./scripts/postgres-init-repl.sh:/docker-entrypoint-initdb.d/postgres-init-repl.sh:ro
+        healthcheck:
+            test:
+                [
+                    'CMD-SHELL',
+                    'pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"',
+                ]
+            interval: 5s
+            timeout: 5s
+            retries: 30
+
+    postgres_replica:
+        image: postgres:18-alpine
+        restart: always
+        environment:
+            PGDATA: /var/lib/postgresql/18/docker
+            POSTGRES_USER: ${DB_USER}
+            POSTGRES_DB: ${DB_NAME}
+            PG_REPL_USER: ${PG_REPL_USER:-replicator}
+            PG_REPL_PASSWORD: ${PG_REPL_PASSWORD:?Set PG_REPL_PASSWORD in .env}
+        entrypoint: ['bash', '/scripts/postgres-standby.sh']
+        ports:
+            - 5433:5432
+        volumes:
+            - postgres_replica_data:/var/lib/postgresql
+            - ./scripts/postgres-standby.sh:/scripts/postgres-standby.sh:ro
+        depends_on:
+            postgres_primary:
+                condition: service_healthy
+        healthcheck:
+            test:
+                [
+                    'CMD-SHELL',
+                    'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -tAc "SELECT pg_is_in_recovery()" | grep -qx t',
+                ]
+            interval: 5s
+            timeout: 5s
+            retries: 30
+
+    mongo_keyfile:
+        image: mongo:8.3.8
+        restart: on-failure
+        user: '0:0'
+        entrypoint: ['bash', '-ec']
+        command:
+            - |
+                if [ ! -s /keys/replica.key ]; then
+                    openssl rand -base64 756 > /keys/replica.key
+                fi
+                chown mongodb:mongodb /keys/replica.key
+                chmod 400 /keys/replica.key
+        volumes:
+            - mongo_keyfile:/keys
+
+    mongo_primary:
         image: mongo:8.3.8
         container_name: chat_mongo
         restart: always
+        command:
+            [
+                'mongod',
+                '--replSet',
+                'rs0',
+                '--bind_ip_all',
+                '--keyFile',
+                '/keys/replica.key',
+            ]
         environment:
             MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER}
             MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASS}
@@ -23,6 +97,71 @@ services:
             - 27017:27017
         volumes:
             - mongo_data:/data/db
+            - mongo_keyfile:/keys:ro
+        depends_on:
+            mongo_keyfile:
+                condition: service_completed_successfully
+        healthcheck:
+            # Exclude the temporary standalone server used by the image to create users.
+            test:
+                - CMD-SHELL
+                - >-
+                    mongosh --quiet --host localhost
+                    --username "$$MONGO_INITDB_ROOT_USERNAME"
+                    --password "$$MONGO_INITDB_ROOT_PASSWORD"
+                    --authenticationDatabase admin
+                    --eval 'quit(db.adminCommand({getCmdLineOpts:1}).parsed.replication?.replSet === "rs0" ? 0 : 1)'
+            interval: 5s
+            timeout: 10s
+            retries: 30
+
+    mongo_replica:
+        image: mongo:8.3.8
+        restart: always
+        command:
+            [
+                'mongod',
+                '--replSet',
+                'rs0',
+                '--bind_ip_all',
+                '--keyFile',
+                '/keys/replica.key',
+            ]
+        ports:
+            - 27018:27017
+        volumes:
+            - mongo_replica_data:/data/db
+            - mongo_keyfile:/keys:ro
+        depends_on:
+            mongo_keyfile:
+                condition: service_completed_successfully
+        healthcheck:
+            test:
+                [
+                    'CMD',
+                    'mongosh',
+                    '--quiet',
+                    '--eval',
+                    'quit(db.adminCommand({ping:1}).ok ? 0 : 1)',
+                ]
+            interval: 5s
+            timeout: 10s
+            retries: 30
+
+    mongo_init_rs:
+        image: mongo:8.3.8
+        restart: on-failure
+        environment:
+            MONGO_USER: ${MONGO_USER}
+            MONGO_PASS: ${MONGO_PASS}
+        entrypoint: ['bash', '/scripts/mongo-init-rs.sh']
+        volumes:
+            - ./scripts/mongo-init-rs.sh:/scripts/mongo-init-rs.sh:ro
+        depends_on:
+            mongo_primary:
+                condition: service_healthy
+            mongo_replica:
+                condition: service_healthy
 
     rabbitmq:
         image: rabbitmq:4.3.5-management-alpine
@@ -43,7 +182,7 @@ services:
         restart: unless-stopped
         ports:
             - 6379:6379
-        command: ["redis-server", "--appendonly", "yes"]
+        command: ['redis-server', '--appendonly', 'yes']
         volumes:
             - redis_data:/data
 
@@ -57,12 +196,15 @@ services:
         volumes:
             - ./nginx.conf:/etc/nginx/nginx.conf:ro
         extra_hosts:
-            - "host.docker.internal:host-gateway"
+            - 'host.docker.internal:host-gateway'
         depends_on:
             - redis
 
 volumes:
     postgres_data:
+    postgres_replica_data:
     mongo_data:
+    mongo_replica_data:
+    mongo_keyfile:
     rabbitmq_data:
     redis_data:

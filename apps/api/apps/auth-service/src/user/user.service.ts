@@ -21,11 +21,42 @@ export class UserService {
       withDeleted: true,
     });
   }
+  /**
+   * ? Helper to execute read queries on a slave if replication is enabled
+   * ? falling back cleanly to the primary connection if running on a single DB.
+   * ? Don't have to implement now
+   */
+
+  /**
+   * * private async runOnSlave<T>(
+   * *  operation: (repo: Repository<User>) => Promise<T>,
+   * * ): Promise<T> {
+   * *  const isReplicationActive = this.dataSource.hasMetadata(User) &&
+   * *   !!this.dataSource.options.replication;
+   *
+   * *  if (!isReplicationActive) {
+   * *    return operation(this.userRepository);
+   * *  }
+   *
+   * *  const runner = this.dataSource.createQueryRunner('slave');
+   * *  try {
+   * *    return await operation(runner.manager.getRepository(User));
+   * *  } finally {
+   * *    await runner.release();
+   * *  }
+   * * }
+   */
 
   async findAll() {
-    return await this.userRepository.find({
-      select: ['id', 'userName', 'email', 'avatarUrl', 'bio', 'createdAt'],
-    });
+    const runner =
+      this.userRepository.manager.connection.createQueryRunner('slave');
+    try {
+      return await runner.manager.getRepository(User).find({
+        select: ['id', 'userName', 'email', 'avatarUrl', 'bio', 'createdAt'],
+      });
+    } finally {
+      await runner.release();
+    }
   }
 
   async findOne(userId: number) {

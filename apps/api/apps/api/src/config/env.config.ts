@@ -11,7 +11,7 @@ if (!existsSync(envPath)) {
 
 config({ path: envPath });
 
-const envSchema = z.object({
+export const envSchema = z.object({
   FRONTEND_URL: z.string().default('http://localhost:3000'),
   DATABASE_URL: z
     .string({
@@ -20,6 +20,12 @@ const envSchema = z.object({
       message: 'Please add database URL to .env file',
     })
     .url('DATABASE_URL must be a valid url'),
+  DATABASE_REPLICA_URL: z.string().url().optional(),
+  PG_REPL_USER: z
+    .string()
+    .regex(/^[a-z_][a-z0-9_]*$/)
+    .default('replicator'),
+  PG_REPL_PASSWORD: z.string().min(1).optional(),
 
   //** These database variables is optional in case using database hosting like Neon */
   DB_HOST: z.string().default('localhost'),
@@ -37,9 +43,23 @@ const envSchema = z.object({
       invalid_type_error: 'MONGO_URI must be a string',
       message: 'Please add mongo URI to .env file',
     })
-    .url('MONGO_URI must be a valid url'),
+    // URL rejects valid MongoDB seed lists containing multiple host:port pairs.
+    .regex(
+      /^mongodb(?:\+srv)?:\/\/[^\s/]+(?:\/[^\s]*)?$/,
+      'MONGO_URI must be a MongoDB connection string',
+    ),
   MONGO_USER: z.string().default('admin'),
   MONGO_PASS: z.string().default('password'),
+  MONGO_REPLICA_SET: z.string().trim().min(1).optional(),
+  MONGO_READ_PREFERENCE: z
+    .enum([
+      'primary',
+      'primaryPreferred',
+      'secondary',
+      'secondaryPreferred',
+      'nearest',
+    ])
+    .default('secondaryPreferred'),
 
   RABBITMQ_URL: z
     .string({

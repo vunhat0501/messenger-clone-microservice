@@ -5,12 +5,10 @@ import {
   Conversation,
   ConversationDocument,
 } from './database/schemas/conversation.schema';
-import {
-  Message,
-  MessageDocument,
-} from './database/schemas/message.schema';
+import { Message, MessageDocument } from './database/schemas/message.schema';
 import { Participant } from './database/schemas/participant.schema';
 import { RpcException } from '@nestjs/microservices';
+import { env } from 'apps/api/src/config/env.config';
 
 @Injectable()
 export class ChatServiceService {
@@ -45,6 +43,7 @@ export class ChatServiceService {
         'participants.userId': userId,
       })
       .sort({ lastMessageAt: -1 })
+      .read(env.MONGO_READ_PREFERENCE)
       .lean()
       .exec();
   }
@@ -69,7 +68,9 @@ export class ChatServiceService {
 
   async createOrGetDirectConversation(user1: Participant, user2: Participant) {
     if (user1.userId === user2.userId) {
-      throw new RpcException('Cannot start a direct conversation with yourself');
+      throw new RpcException(
+        'Cannot start a direct conversation with yourself',
+      );
     }
 
     let conversation = await this.conversationModel.findOne({
@@ -143,6 +144,7 @@ export class ChatServiceService {
         conversationId: new Types.ObjectId(conversationId),
       })
       .sort({ createdAt: 1 })
+      .read(env.MONGO_READ_PREFERENCE)
       .limit(limit)
       .lean()
       .exec();
@@ -162,7 +164,9 @@ export class ChatServiceService {
       'participants.userId': payload.senderId,
     });
     if (!conv) {
-      throw new RpcException('Conversation not found or sender not a participant');
+      throw new RpcException(
+        'Conversation not found or sender not a participant',
+      );
     }
 
     const message = await this.messageModel.create({

@@ -6,14 +6,16 @@ export default registerAs(
   'postgres',
   (): PostgresConnectionOptions => ({
     type: 'postgres',
-    url: env.DATABASE_URL,
-
-    //** Fallbacks in case develop locally or the db url is missing */
-    host: env.DB_HOST,
-    port: env.DB_PORT,
-    username: env.DB_USER,
-    password: env.DB_PASS,
-    database: env.DB_NAME,
+    ...(env.DATABASE_REPLICA_URL
+      ? {
+          replication: {
+            master: { url: env.DATABASE_URL },
+            slaves: [{ url: env.DATABASE_REPLICA_URL }],
+            // Credentials, refresh tokens and authorization must see current data.
+            defaultMode: 'master' as const,
+          },
+        }
+      : { url: env.DATABASE_URL }),
     entities: [],
 
     //! DO NOT set to true in production
