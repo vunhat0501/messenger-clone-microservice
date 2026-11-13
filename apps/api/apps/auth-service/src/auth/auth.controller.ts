@@ -26,7 +26,7 @@ export class AuthController {
 
   @MessagePattern('auth.validate_refresh')
   validateRefreshToken(
-    @Payload() data: { userId: number; refreshToken: string },
+    @Payload() data: { userId: string; refreshToken: string },
   ) {
     return this.authService.validateRefreshToken(
       data.userId,
@@ -45,18 +45,18 @@ export class AuthController {
   }
 
   @MessagePattern('auth.signout')
-  async signOut(@Payload() userId: number) {
+  async signOut(@Payload() userId: string) {
     await this.authService.signOut(userId);
     return { success: true };
   }
 
   @MessagePattern('auth.update')
   update(@Payload() payload: { id: string; updateAuthDto: UpdateAuthDto }) {
-    return this.authService.update(+payload.id, payload.updateAuthDto);
+    return this.authService.update(payload.id, payload.updateAuthDto);
   }
 
   @MessagePattern('auth.remove')
   remove(@Payload() id: string) {
-    return this.authService.remove(+id);
+    return this.authService.remove(id);
   }
 }

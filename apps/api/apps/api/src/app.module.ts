@@ -10,10 +10,12 @@ import { LoggerMiddleware } from 'apps/api/src/common/middleware/logger/logger.m
 import { GatewayAuthModule } from 'apps/api/src/auth/auth-gateway.module';
 import { GatewayChatModule } from 'apps/api/src/chat/chat-gateway.module';
 import { GatewayUserModule } from 'apps/api/src/users/users-gateway.module';
+import { RedisCacheModule } from 'apps/api/src/common/cache/redis-cache.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    RedisCacheModule,
     GatewayAuthModule,
     GatewayUserModule,
     GatewayChatModule,

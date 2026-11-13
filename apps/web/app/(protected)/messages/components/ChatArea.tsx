@@ -33,7 +33,7 @@ interface ChatAreaProps {
   selectedGateway: string;
   isDisconnected: boolean;
   socketStatus: SocketStatus;
-  currentUserId?: number;
+  currentUserId?: string;
   currentUserName?: string;
   messagesEndRef: React.RefObject<HTMLDivElement | null>;
 }
@@ -56,7 +56,7 @@ export function ChatArea({
     if (conv.participants && conv.participants.length > 0) {
       const other = conv.participants.find((p) => {
         const idMatches =
-          currentUserId != null && Number(p.userId) === Number(currentUserId);
+          currentUserId != null && String(p.userId) === String(currentUserId);
         const nameMatches = Boolean(
           currentUserName &&
           p.userName?.trim().toLowerCase() ===
@@ -66,21 +66,23 @@ export function ChatArea({
       });
       if (other) return other;
 
-      if (conv.participants.length > 1) {
+      const p0 = conv.participants[0];
+      const p1 = conv.participants[1];
+      if (conv.participants.length > 1 && p0 && p1) {
         const firstIsMe =
           (currentUserId != null &&
-            Number(conv.participants[0].userId) === Number(currentUserId)) ||
+            String(p0.userId) === String(currentUserId)) ||
           Boolean(
             currentUserName &&
-            conv.participants[0].userName?.trim().toLowerCase() ===
+            p0.userName?.trim().toLowerCase() ===
               currentUserName?.trim().toLowerCase(),
           );
-        return firstIsMe ? conv.participants[1] : conv.participants[0];
+        return firstIsMe ? p1 : p0;
       }
     }
     return (
       conv.participants?.[0] || {
-        userId: 0,
+        userId: '',
         userName: 'Chat',
         avatarUrl: undefined,
       }
@@ -162,11 +164,11 @@ export function ChatArea({
           <MessageGroup className="space-y-4">
             {messages.map((msg) => {
               const sender = activeConversation.participants.find(
-                (p) => Number(p.userId) === Number(msg.senderId),
+                (p) => String(p.userId) === String(msg.senderId),
               );
               const isMe =
                 (currentUserId != null &&
-                  Number(msg.senderId) === Number(currentUserId)) ||
+                  String(msg.senderId) === String(currentUserId)) ||
                 Boolean(
                   currentUserName &&
                   sender?.userName?.trim().toLowerCase() ===

@@ -9,7 +9,7 @@ export class ChatServiceController {
 
   @MessagePattern('user.profile.updated')
   updatedUser(
-    @Payload() data: { userId: number; newAvatar: string; newName: string },
+    @Payload() data: { userId: string; newAvatar: string; newName: string },
   ) {
     return this.chatServiceService.handleProfileUpdate(
       data.userId,
@@ -19,13 +19,13 @@ export class ChatServiceController {
   }
 
   @MessagePattern('chat.get_conversations')
-  getConversations(@Payload() data: { userId: number }) {
+  getConversations(@Payload() data: { userId: string }) {
     return this.chatServiceService.getConversations(data.userId);
   }
 
   @MessagePattern('chat.get_conversation_by_id')
   getConversationById(
-    @Payload() data: { conversationId: string; userId: number },
+    @Payload() data: { conversationId: string; userId: string },
   ) {
     return this.chatServiceService.getConversationById(
       data.conversationId,
@@ -61,7 +61,7 @@ export class ChatServiceController {
 
   @MessagePattern('chat.get_messages')
   getMessages(
-    @Payload() data: { conversationId: string; userId: number; limit?: number },
+    @Payload() data: { conversationId: string; userId: string; limit?: number },
   ) {
     return this.chatServiceService.getMessages(
       data.conversationId,
@@ -75,7 +75,7 @@ export class ChatServiceController {
     @Payload()
     data: {
       conversationId: string;
-      senderId: number;
+      senderId: string;
       text: string;
     },
   ) {
@@ -87,7 +87,7 @@ export class ChatServiceController {
     @Payload()
     data: {
       conversationId: string;
-      senderId: number;
+      senderId: string;
       text: string;
     },
   ) {
@@ -95,7 +95,7 @@ export class ChatServiceController {
   }
 
   @MessagePattern('chat.mark_read')
-  markRead(@Payload() data: { conversationId: string; userId: number }) {
+  markRead(@Payload() data: { conversationId: string; userId: string }) {
     return this.chatServiceService.markAsRead(data.conversationId, data.userId);
   }
 }

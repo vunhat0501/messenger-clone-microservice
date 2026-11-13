@@ -38,7 +38,7 @@ interface ChatSidebarProps {
   socketStatus: SocketStatus;
   isDisconnected: boolean;
   onDisconnect: () => void;
-  currentUserId?: number;
+  currentUserId?: string;
   currentUserName?: string;
 }
 
@@ -64,7 +64,7 @@ export function ChatSidebar({
     if (conv.participants && conv.participants.length > 0) {
       const other = conv.participants.find((p) => {
         const idMatches =
-          currentUserId != null && Number(p.userId) === Number(currentUserId);
+          currentUserId != null && String(p.userId) === String(currentUserId);
         const nameMatches = Boolean(
           currentUserName &&
           p.userName?.trim().toLowerCase() ===
@@ -74,21 +74,23 @@ export function ChatSidebar({
       });
       if (other) return other;
 
-      if (conv.participants.length > 1) {
+      const p0 = conv.participants[0];
+      const p1 = conv.participants[1];
+      if (conv.participants.length > 1 && p0 && p1) {
         const firstIsMe =
           (currentUserId != null &&
-            Number(conv.participants[0].userId) === Number(currentUserId)) ||
+            String(p0.userId) === String(currentUserId)) ||
           Boolean(
             currentUserName &&
-            conv.participants[0].userName?.trim().toLowerCase() ===
+            p0.userName?.trim().toLowerCase() ===
               currentUserName?.trim().toLowerCase(),
           );
-        return firstIsMe ? conv.participants[1] : conv.participants[0];
+        return firstIsMe ? p1 : p0;
       }
     }
     return (
       conv.participants?.[0] || {
-        userId: 0,
+        userId: '',
         userName: 'Chat',
         avatarUrl: undefined,
       }

@@ -12,9 +12,8 @@ export class UserController {
     return this.userService.findAll();
   }
 
-  //** remember to change userId to uuid and this function across backend to string*/
   @MessagePattern('user.find_one')
-  findOne(@Payload() data: { id: number }) {
+  findOne(@Payload() data: { id: string }) {
     return this.userService.findOne(data.id);
   }
 
@@ -34,12 +33,12 @@ export class UserController {
   }
 
   @MessagePattern('user.update')
-  update(@Payload() data: { id: number; updateUserDto: UpdateUserDto }) {
+  update(@Payload() data: { id: string; updateUserDto: UpdateUserDto }) {
     return this.userService.update(data.id, data.updateUserDto);
   }
 
   @MessagePattern('user.soft_delete')
-  softDeleteUser(@Payload() data: { id: number }) {
+  softDeleteUser(@Payload() data: { id: string }) {
     return this.userService.softDeleteUser(data.id);
   }
 }

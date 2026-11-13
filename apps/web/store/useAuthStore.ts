@@ -16,7 +16,7 @@ interface AuthState {
   signIn: (credentials: any) => Promise<void>;
   signOut: () => Promise<void>;
   checkSession: () => Promise<void>;
-  deleteAccount: (userId: number) => Promise<void>;
+  deleteAccount: (userId: string) => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -75,7 +75,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
 
-  deleteAccount: async (userId: number) => {
+  deleteAccount: async (userId: string) => {
     try {
       await api.delete(`/users/${userId}`);
       await authSignOut();

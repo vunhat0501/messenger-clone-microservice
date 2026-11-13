@@ -1,7 +1,7 @@
 import { Role } from '@workspace/types';
 
 export type AuthJwtPayload = {
-  sub: number;
+  sub: string;
   name: string;
   email: string;
   role: Role;

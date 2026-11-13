@@ -1,4 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -9,6 +11,10 @@ import { Message, MessageDocument } from './database/schemas/message.schema';
 import { Participant } from './database/schemas/participant.schema';
 import { RpcException } from '@nestjs/microservices';
 import { env } from 'apps/api/src/config/env.config';
+import {
+  CACHE_KEYS,
+  CACHE_TTL,
+} from 'apps/api/src/common/cache/cache.constants';
 
 @Injectable()
 export class ChatServiceService {
@@ -17,13 +23,46 @@ export class ChatServiceService {
     private readonly messageModel: Model<MessageDocument>,
     @InjectModel(Conversation.name)
     private readonly conversationModel: Model<ConversationDocument>,
+    @Inject(CACHE_MANAGER)
+    private readonly cacheManager: Cache,
   ) {}
 
+  private async invalidateParticipantsConversationCache(
+    participants: Participant[],
+    conversationId?: string,
+  ) {
+    const tasks: Promise<unknown>[] = [];
+    for (const p of participants) {
+      tasks.push(this.cacheManager.del(CACHE_KEYS.userConversations(p.userId)));
+      if (conversationId) {
+        tasks.push(
+          this.cacheManager.del(
+            CACHE_KEYS.conversationById(conversationId, p.userId),
+          ),
+        );
+      }
+    }
+    if (conversationId) {
+      tasks.push(
+        this.cacheManager.del(
+          CACHE_KEYS.conversationMessages(conversationId, 100),
+        ),
+      );
+    }
+    await Promise.all(tasks);
+  }
+
   async handleProfileUpdate(
-    userId: number,
+    userId: string,
     newAvatar: string,
     newName: string,
   ) {
+    const affectedConversations = await this.conversationModel
+      .find({ 'participants.userId': userId })
+      .select('participants')
+      .lean()
+      .exec();
+
     await this.conversationModel.updateMany(
       {
         'participants.userId': userId,
@@ -35,10 +74,28 @@ export class ChatServiceService {
         },
       },
     );
+
+    const participantIds = new Set<string>([userId]);
+    for (const conv of affectedConversations) {
+      for (const p of conv.participants ?? []) {
+        participantIds.add(p.userId);
+      }
+    }
+    await Promise.all(
+      Array.from(participantIds).map((id) =>
+        this.cacheManager.del(CACHE_KEYS.userConversations(id)),
+      ),
+    );
   }
 
-  async getConversations(userId: number) {
-    return this.conversationModel
+  async getConversations(userId: string) {
+    const cacheKey = CACHE_KEYS.userConversations(userId);
+    const cached = await this.cacheManager.get<Conversation[]>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const conversations = await this.conversationModel
       .find({
         'participants.userId': userId,
       })
@@ -46,12 +103,26 @@ export class ChatServiceService {
       .read(env.MONGO_READ_PREFERENCE)
       .lean()
       .exec();
+
+    await this.cacheManager.set(
+      cacheKey,
+      conversations,
+      CACHE_TTL.CONVERSATIONS,
+    );
+    return conversations;
   }
 
-  async getConversationById(conversationId: string, userId: number) {
+  async getConversationById(conversationId: string, userId: string) {
     if (!Types.ObjectId.isValid(conversationId)) {
       throw new RpcException('Invalid conversation ID');
     }
+
+    const cacheKey = CACHE_KEYS.conversationById(conversationId, userId);
+    const cached = await this.cacheManager.get<Conversation>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const conversation = await this.conversationModel
       .findOne({
         _id: new Types.ObjectId(conversationId),
@@ -63,6 +134,12 @@ export class ChatServiceService {
     if (!conversation) {
       throw new RpcException('Conversation not found or access denied');
     }
+
+    await this.cacheManager.set(
+      cacheKey,
+      conversation,
+      CACHE_TTL.CONVERSATIONS,
+    );
     return conversation;
   }
 
@@ -99,6 +176,11 @@ export class ChatServiceService {
         lastMessageAt: new Date(),
         lastMessageSnippet: '',
       });
+
+      await this.invalidateParticipantsConversationCache(
+        conversation.participants,
+        String(conversation._id),
+      );
     }
 
     return conversation;
@@ -109,7 +191,7 @@ export class ChatServiceService {
     members: Participant[],
     groupName: string,
   ) {
-    const participantMap = new Map<number, Participant>();
+    const participantMap = new Map<string, Participant>();
     participantMap.set(creator.userId, creator);
     for (const member of members) {
       participantMap.set(member.userId, member);
@@ -123,10 +205,15 @@ export class ChatServiceService {
       lastMessageSnippet: '',
     });
 
+    await this.invalidateParticipantsConversationCache(
+      conversation.participants,
+      String(conversation._id),
+    );
+
     return conversation;
   }
 
-  async getMessages(conversationId: string, userId: number, limit = 100) {
+  async getMessages(conversationId: string, userId: string, limit = 100) {
     if (!Types.ObjectId.isValid(conversationId)) {
       throw new RpcException('Invalid conversation ID');
     }
@@ -139,7 +226,13 @@ export class ChatServiceService {
       throw new RpcException('Conversation not found or access denied');
     }
 
-    return this.messageModel
+    const cacheKey = CACHE_KEYS.conversationMessages(conversationId, limit);
+    const cachedMessages = await this.cacheManager.get<Message[]>(cacheKey);
+    if (cachedMessages) {
+      return cachedMessages;
+    }
+
+    const messages = await this.messageModel
       .find({
         conversationId: new Types.ObjectId(conversationId),
       })
@@ -148,11 +241,14 @@ export class ChatServiceService {
       .limit(limit)
       .lean()
       .exec();
+
+    await this.cacheManager.set(cacheKey, messages, CACHE_TTL.MESSAGES);
+    return messages;
   }
 
   async saveMessage(payload: {
     conversationId: string;
-    senderId: number;
+    senderId: string;
     text: string;
   }) {
     if (!Types.ObjectId.isValid(payload.conversationId)) {
@@ -181,10 +277,15 @@ export class ChatServiceService {
       lastMessageSnippet: payload.text,
     });
 
+    await this.invalidateParticipantsConversationCache(
+      conv.participants,
+      payload.conversationId,
+    );
+
     return message;
   }
 
-  async markAsRead(conversationId: string, userId: number) {
+  async markAsRead(conversationId: string, userId: string) {
     if (!Types.ObjectId.isValid(conversationId)) {
       throw new RpcException('Invalid conversation ID');
     }
@@ -197,6 +298,10 @@ export class ChatServiceService {
       {
         $addToSet: { readBy: userId },
       },
+    );
+
+    await this.cacheManager.del(
+      CACHE_KEYS.conversationMessages(conversationId, 100),
     );
 
     return { success: true };

@@ -21,7 +21,7 @@ export class GatewayUsersController {
 
   @Get(':id')
   findOne(@Param('id') id: string) {
-    return this.authClient.send('user.find_one', { id: +id });
+    return this.authClient.send('user.find_one', { id });
   }
 
   @Get('profile/:userName')
@@ -31,11 +31,11 @@ export class GatewayUsersController {
 
   @Patch(':id')
   update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
-    return this.authClient.send('user.update', { id: +id, updateUserDto });
+    return this.authClient.send('user.update', { id, updateUserDto });
   }
 
   @Delete(':id')
-  softDeleteUser(@Param('id') id: number) {
-    return this.authClient.send('user.soft_delete', { id: +id });
+  softDeleteUser(@Param('id') id: string) {
+    return this.authClient.send('user.soft_delete', { id });
   }
 }

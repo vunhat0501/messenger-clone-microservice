@@ -47,11 +47,11 @@ export class ChatGatewayController {
     @GetUser() user: AuthenticatedUser,
     @Body()
     body: {
-      targetUserId?: number;
+      targetUserId?: string;
       targetUserName?: string;
       isGroup?: boolean;
       groupName?: string;
-      participantIds?: number[];
+      participantIds?: string[];
     },
   ) {
     const currentUserInfo = await firstValueFrom(

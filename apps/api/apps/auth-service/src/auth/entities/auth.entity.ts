@@ -15,8 +15,8 @@ import {
 @Unique(['user', 'authProvider'])
 @Unique(['authProvider', 'authProviderId'])
 export class Auth {
-  @PrimaryGeneratedColumn('increment')
-  id: number;
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
 
   @Column({ name: 'hashed_password', nullable: true })
   hashedPassword: string;

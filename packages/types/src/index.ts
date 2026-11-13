@@ -4,14 +4,14 @@ export enum Role {
 }
 
 export interface AuthenticatedUser {
-  id: number;
+  id: string;
   name: string;
   email: string;
   role: Role;
 }
 
 export interface ProfileData {
-  id: number;
+  id: string;
   userName: string;
   email: string;
   role: Role;

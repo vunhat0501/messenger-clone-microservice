@@ -37,20 +37,29 @@ export class AuthService {
 
     const hashedPassword = await hash(createAuthDto.password);
 
-    return this.dataSource.transaction(async (transactionalEntityManager) => {
-      const newUser = transactionalEntityManager.create(User, {
-        userName: createAuthDto.userName,
-        email: createAuthDto.email,
-      });
-      const savedUser = await transactionalEntityManager.save(User, newUser);
-      const newAuth = transactionalEntityManager.create(Auth, {
-        hashedPassword,
-        authProvider: 'local',
-        user: savedUser,
-      });
+    const createdAuth = await this.dataSource.transaction(
+      async (transactionalEntityManager) => {
+        const newUser = transactionalEntityManager.create(User, {
+          userName: createAuthDto.userName,
+          email: createAuthDto.email,
+        });
+        const savedUser = await transactionalEntityManager.save(User, newUser);
+        const newAuth = transactionalEntityManager.create(Auth, {
+          hashedPassword,
+          authProvider: 'local',
+          user: savedUser,
+        });
 
-      return transactionalEntityManager.save(Auth, newAuth);
-    });
+        return transactionalEntityManager.save(Auth, newAuth);
+      },
+    );
+
+    await this.userService.invalidateUserCache(
+      createdAuth.user?.id,
+      createAuthDto.userName,
+    );
+
+    return createdAuth;
   }
 
   async validateLocalUser(
@@ -89,7 +98,7 @@ export class AuthService {
     };
   }
 
-  async signIn(userId: number, name: string, email: string, role: Role) {
+  async signIn(userId: string, name: string, email: string, role: Role) {
     const { accessToken, refreshToken } = await this.generateTokens(
       userId,
       name,
@@ -100,7 +109,7 @@ export class AuthService {
     const result = await this.authRepository.update(
       {
         authProvider: 'local',
-        user: userId as any,
+        user: { id: userId },
       },
       {
         refreshToken: hashedRefreshToken,
@@ -121,15 +130,15 @@ export class AuthService {
     };
   }
 
-  async signOut(userId: number) {
+  async signOut(userId: string) {
     return this.authRepository.update(
-      { user: userId as any, authProvider: 'local' },
+      { user: { id: userId }, authProvider: 'local' },
       { refreshToken: null },
     );
   }
 
   async generateTokens(
-    userId: number,
+    userId: string,
     name: string,
     email: string,
     role: Role,
@@ -146,7 +155,7 @@ export class AuthService {
     };
   }
 
-  async refreshToken(userId: number, name: string, email: string, role: Role) {
+  async refreshToken(userId: string, name: string, email: string, role: Role) {
     const { accessToken, refreshToken } = await this.generateTokens(
       userId,
       name,
@@ -157,7 +166,7 @@ export class AuthService {
     const result = await this.authRepository.update(
       {
         authProvider: 'local',
-        user: userId as any,
+        user: { id: userId },
       },
       {
         refreshToken: hashedRefreshToken,
@@ -189,7 +198,7 @@ export class AuthService {
   // }
 
   async validateRefreshToken(
-    userId: number,
+    userId: string,
     refreshToken: string,
   ): Promise<AuthenticatedUser> {
     const authRecord = await this.authRepository.findOne({
@@ -228,11 +237,11 @@ export class AuthService {
     };
   }
 
-  update(id: number, updateAuthDto: UpdateAuthDto) {
+  update(id: string, updateAuthDto: UpdateAuthDto) {
     return `This action updates a #${id} auth`;
   }
 
-  remove(id: number) {
+  remove(id: string) {
     return `This action removes a #${id} auth`;
   }
 }

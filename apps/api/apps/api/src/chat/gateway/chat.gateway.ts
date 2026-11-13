@@ -104,7 +104,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('sendMessage')
   async handleMessage(
     @MessageBody()
-    payload: { text: string; conversationId: string; senderId?: number },
+    payload: { text: string; conversationId: string; senderId?: string },
     @ConnectedSocket() client: Socket,
   ) {
     const senderId =

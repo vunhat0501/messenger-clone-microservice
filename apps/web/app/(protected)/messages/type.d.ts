@@ -1,5 +1,5 @@
 export interface Participant {
-  userId: number;
+  userId: string;
   userName: string;
   avatarUrl?: string;
 }
@@ -16,14 +16,14 @@ export interface ConversationItem {
 export interface ChatMessage {
   _id: string;
   conversationId: string;
-  senderId: number;
+  senderId: string;
   text: string;
   createdAt: string;
-  readBy?: number[];
+  readBy?: string[];
 }
 
 export interface UserSummary {
-  id: number;
+  id: string;
   userName: string;
   email?: string;
   avatarUrl?: string;

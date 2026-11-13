@@ -30,6 +30,8 @@
     "seed": "ts-node -P tsconfig.json -r tsconfig-paths/register src/database/seed.ts"
   },
   "dependencies": {
+    "@keyv/redis": "^6.1.0",
+    "@nestjs/cache-manager": "^12.0.4",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.3",
     "@nestjs/core": "^11.0.1",
@@ -46,12 +48,14 @@
     "amqp-connection-manager": "^5.0.0",
     "amqplib": "^2.0.1",
     "argon2": "^0.44.0",
+    "cache-manager": "^7.2.9",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "cookie-parser": "^1.4.7",
     "cross-env": "^10.1.0",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
+    "keyv": "^6.1.0",
     "mongoose": "^9.9.2",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
@@ -113,13 +117,19 @@
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
+    "transformIgnorePatterns": [
+      "/node_modules/(?!.*(@nestjs/cache-manager|cache-manager|@keyv/redis|keyv)/)"
+    ],
     "collectCoverageFrom": [
       "**/*.(t|j)s"
     ],
     "coverageDirectory": "./coverage",
     "testEnvironment": "node",
     "moduleNameMapper": {
-      "^@/(.*)$": "<rootDir>/$1"
+      "^@/(.*)$": "<rootDir>/apps/api/src/$1",
+      "^@auth/(.*)$": "<rootDir>/apps/auth-service/src/$1",
+      "^@chat/(.*)$": "<rootDir>/apps/chat-service/src/$1",
+      "^apps/(.*)$": "<rootDir>/apps/$1"
     },
     "roots": [
       "<rootDir>/apps/"

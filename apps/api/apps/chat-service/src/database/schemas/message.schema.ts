@@ -13,14 +13,14 @@ export class Message {
   })
   conversationId: Types.ObjectId;
 
-  @Prop({ type: Number, required: true })
-  senderId: number;
+  @Prop({ type: String, required: true })
+  senderId: string;
 
   @Prop({ required: true })
   text: string;
 
-  @Prop({ type: [Number], default: [] })
-  readBy: number[];
+  @Prop({ type: [String], default: [] })
+  readBy: string[];
 }
 
 export const messageSchema = SchemaFactory.createForClass(Message);

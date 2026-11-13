@@ -7,10 +7,12 @@ import { UserModule } from 'apps/auth-service/src/user/user.module';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER } from '@nestjs/core';
 import { ExceptionFilter } from 'apps/auth-service/src/common/filter/rpc-exception/rpc-exception.filter';
+import { RedisCacheModule } from 'apps/api/src/common/cache/redis-cache.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    RedisCacheModule,
     DatabaseModule,
     AuthModule,
     UserModule,

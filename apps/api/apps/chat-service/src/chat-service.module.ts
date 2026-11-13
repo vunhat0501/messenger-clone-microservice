@@ -5,6 +5,7 @@ import { APP_FILTER } from '@nestjs/core';
 import { ExceptionFilter } from 'apps/chat-service/src/common/filter/rpc-exception/rpc-exception.filter';
 import { ConfigModule } from '@nestjs/config';
 import { MongoDatabaseModule } from 'apps/chat-service/src/database/mongo-database.module';
+import { RedisCacheModule } from 'apps/api/src/common/cache/redis-cache.module';
 
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -16,6 +17,7 @@ import { Message, messageSchema } from './database/schemas/message.schema';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    RedisCacheModule,
     MongoDatabaseModule,
     MongooseModule.forFeature([
       { name: Conversation.name, schema: ConversationSchema },

@@ -15,8 +15,8 @@ import {
   where: 'deleted_at IS NULL',
 })
 export class User {
-  @PrimaryGeneratedColumn('increment')
-  id: number;
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
 
   @Index()
   @Column({ name: 'user_name', unique: true })

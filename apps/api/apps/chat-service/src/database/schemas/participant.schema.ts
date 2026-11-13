@@ -2,8 +2,8 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 
 @Schema({ _id: false })
 export class Participant {
-  @Prop({ type: Number, required: true, index: true })
-  userId: number;
+  @Prop({ type: String, required: true, index: true })
+  userId: string;
 
   @Prop({ required: true })
   userName: string;
