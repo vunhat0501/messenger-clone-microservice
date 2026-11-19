@@ -13,6 +13,7 @@ import { ClientProxy } from '@nestjs/microservices';
 import { firstValueFrom } from 'rxjs';
 import { JwtService } from '@nestjs/jwt';
 import { env } from 'apps/api/src/config/env.config';
+import { PresenceService } from './presence.service';
 
 @WebSocketGateway({
   cors: {
@@ -29,6 +30,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   constructor(
     @Inject('CHAT_SERVICE') private readonly chatClient: ClientProxy,
     private readonly jwtService: JwtService,
+    private readonly presenceService: PresenceService,
   ) {}
 
   async handleConnection(client: Socket) {
@@ -61,6 +63,24 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.logger.log(
           `Socket client connected: ${client.id} (user: ${payload.sub})`,
         );
+
+        // Register connection for presence tracking
+        const becameOnline = await this.presenceService.addConnection(
+          payload.sub,
+          client.id,
+        );
+
+        // Send current online users list to connecting client
+        const onlineUsers = await this.presenceService.getOnlineUsers();
+        client.emit('onlineUsers', onlineUsers);
+
+        // Broadcast status change if user just became online
+        if (becameOnline) {
+          this.server.emit('userStatusChanged', {
+            userId: payload.sub,
+            status: 'online',
+          });
+        }
       } else {
         this.logger.warn(`Socket client connected without token: ${client.id}`);
       }
@@ -71,8 +91,27 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
-  handleDisconnect(client: Socket) {
+  async handleDisconnect(client: Socket) {
     this.logger.log(`Socket client disconnected: ${client.id}`);
+
+    const userId = client.data?.user?.sub ?? (client as any).user?.userId;
+    if (userId) {
+      const becameOffline = await this.presenceService.removeConnection(
+        userId,
+        client.id,
+      );
+      if (becameOffline) {
+        this.server.emit('userStatusChanged', {
+          userId,
+          status: 'offline',
+        });
+      }
+    }
+  }
+
+  @SubscribeMessage('getOnlineUsers')
+  async handleGetOnlineUsers() {
+    return this.presenceService.getOnlineUsers();
   }
 
   @SubscribeMessage('joinConversation')

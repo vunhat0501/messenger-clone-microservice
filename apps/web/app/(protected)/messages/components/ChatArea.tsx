@@ -35,6 +35,7 @@ interface ChatAreaProps {
   socketStatus: SocketStatus;
   currentUserId?: string;
   currentUserName?: string;
+  onlineUserIds?: string[];
   messagesEndRef: React.RefObject<HTMLDivElement | null>;
 }
 
@@ -50,6 +51,7 @@ export function ChatArea({
   socketStatus,
   currentUserId,
   currentUserName,
+  onlineUserIds = [],
   messagesEndRef,
 }: ChatAreaProps) {
   const getOtherParticipant = (conv: ConversationItem): Participant => {
@@ -110,38 +112,75 @@ export function ChatArea({
       : otherParticipant.userName;
 
   const isConnected = !isDisconnected && socketStatus === 'connected';
+  const isOtherOnline = !activeConversation.isGroup && otherParticipant.userId
+    ? onlineUserIds.includes(String(otherParticipant.userId))
+    : false;
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-background">
       {/* Header */}
       <div className="flex h-16 items-center justify-between border-b px-6">
         <div className="flex items-center gap-3">
-          <Avatar className="h-10 w-10">
-            <AvatarImage src={otherParticipant.avatarUrl} />
-            <AvatarFallback>
-              {otherParticipant.userName.substring(0, 2).toUpperCase()}
-            </AvatarFallback>
-          </Avatar>
+          <div className="relative">
+            <Avatar className="h-10 w-10">
+              <AvatarImage src={otherParticipant.avatarUrl} />
+              <AvatarFallback>
+                {otherParticipant.userName.substring(0, 2).toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+            {!activeConversation.isGroup && (
+              <span
+                className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full ring-2 ring-background ${
+                  isOtherOnline ? 'bg-emerald-500' : 'bg-zinc-400'
+                }`}
+                title={isOtherOnline ? 'Online' : 'Offline'}
+              />
+            )}
+          </div>
           <div>
             <h3 className="font-semibold text-sm">{conversationTitle}</h3>
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span
-                className={`inline-block h-1.5 w-1.5 rounded-full ${
-                  isConnected ? 'bg-emerald-500' : 'bg-rose-500'
-                }`}
-              />
-              <span>
-                {isDisconnected
-                  ? 'Disconnected from WS'
-                  : socketStatus === 'connecting'
-                    ? 'Connecting to gateway...'
-                    : `Online via ${selectedGateway}`}
-              </span>
+            <div className="flex items-center gap-1.5 text-xs">
+              {!activeConversation.isGroup ? (
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={`inline-block h-1.5 w-1.5 rounded-full ${
+                      isOtherOnline ? 'bg-emerald-500' : 'bg-zinc-400'
+                    }`}
+                  />
+                  <span
+                    className={
+                      isOtherOnline
+                        ? 'text-emerald-500 font-medium'
+                        : 'text-muted-foreground'
+                    }
+                  >
+                    {isOtherOnline ? 'Active now' : 'Offline'}
+                  </span>
+                </div>
+              ) : (
+                <span className="text-muted-foreground">
+                  {activeConversation.participants.length} members
+                </span>
+              )}
             </div>
           </div>
         </div>
 
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <div className="flex items-center gap-1 rounded-md bg-muted px-2 py-1">
+            <span
+              className={`inline-block h-1.5 w-1.5 rounded-full ${
+                isConnected ? 'bg-emerald-500' : 'bg-rose-500'
+              }`}
+            />
+            <span>
+              {isDisconnected
+                ? 'WS Disconnected'
+                : socketStatus === 'connecting'
+                  ? 'Connecting...'
+                  : `${selectedGateway.replace(/^https?:\/\//, '')}`}
+            </span>
+          </div>
           <span className="rounded-md bg-muted px-2 py-1">
             Room: {activeConversation._id.slice(-6)}
           </span>

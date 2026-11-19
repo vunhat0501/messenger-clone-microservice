@@ -26,6 +26,7 @@ export function ChatContainer() {
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [socketStatus, setSocketStatus] = useState<SocketStatus>('connecting');
   const [isDisconnected, setIsDisconnected] = useState(false);
+  const [onlineUserIds, setOnlineUserIds] = useState<string[]>([]);
 
   // Gateway switcher for demo purposes (Nginx load balancer default, or direct gateway instances)
   const [selectedGateway, setSelectedGateway] = useState<string>(
@@ -146,6 +147,24 @@ export function ChatContainer() {
       socket.on('connect_error', () => {
         setSocketStatus('disconnected');
       });
+
+      socket.on('onlineUsers', (userIds: string[]) => {
+        setOnlineUserIds(Array.isArray(userIds) ? userIds : []);
+      });
+
+      socket.on(
+        'userStatusChanged',
+        ({ userId, status }: { userId: string; status: 'online' | 'offline' }) => {
+          setOnlineUserIds((prev) => {
+            if (status === 'online') {
+              if (prev.includes(userId)) return prev;
+              return [...prev, userId];
+            } else {
+              return prev.filter((id) => id !== userId);
+            }
+          });
+        },
+      );
 
       socket.on('newMessage', (incomingMsg: ChatMessage) => {
         if (
@@ -315,6 +334,7 @@ export function ChatContainer() {
         onDisconnect={handleDisconnect}
         currentUserId={user?.id}
         currentUserName={user?.name}
+        onlineUserIds={onlineUserIds}
       />
 
       <ChatArea
@@ -329,6 +349,7 @@ export function ChatContainer() {
         socketStatus={socketStatus}
         currentUserId={user?.id}
         currentUserName={user?.name}
+        onlineUserIds={onlineUserIds}
         messagesEndRef={messagesEndRef}
       />
     </div>

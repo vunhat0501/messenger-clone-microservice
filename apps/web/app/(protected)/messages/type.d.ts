@@ -30,3 +30,8 @@ export interface UserSummary {
 }
 
 export type SocketStatus = 'connected' | 'connecting' | 'disconnected';
+
+export interface UserStatusEvent {
+  userId: string;
+  status: 'online' | 'offline';
+}

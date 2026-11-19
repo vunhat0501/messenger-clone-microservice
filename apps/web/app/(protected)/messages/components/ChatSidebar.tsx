@@ -40,6 +40,7 @@ interface ChatSidebarProps {
   onDisconnect: () => void;
   currentUserId?: string;
   currentUserName?: string;
+  onlineUserIds?: string[];
 }
 
 export function ChatSidebar({
@@ -59,6 +60,7 @@ export function ChatSidebar({
   onDisconnect,
   currentUserId,
   currentUserName,
+  onlineUserIds = [],
 }: ChatSidebarProps) {
   const getOtherParticipant = (conv: ConversationItem): Participant => {
     if (conv.participants && conv.participants.length > 0) {
@@ -135,28 +137,50 @@ export function ChatSidebar({
                     No other users found.
                   </div>
                 ) : (
-                  availableUsers.map((u) => (
-                    <button
-                      key={u.id}
-                      onClick={() => onStartChatWithUser(u)}
-                      className="flex w-full items-center gap-3 rounded-lg p-2.5 text-left transition hover:bg-muted"
-                    >
-                      <Avatar className="h-9 w-9">
-                        <AvatarImage src={u.avatarUrl} />
-                        <AvatarFallback>
-                          {u.userName.substring(0, 2).toUpperCase()}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="flex flex-col">
-                        <span className="font-medium text-sm">
-                          {u.userName}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          {u.email || `User #${u.id}`}
-                        </span>
-                      </div>
-                    </button>
-                  ))
+                  availableUsers.map((u) => {
+                    const isOnline = onlineUserIds.includes(String(u.id));
+                    return (
+                      <button
+                        key={u.id}
+                        onClick={() => onStartChatWithUser(u)}
+                        className="flex w-full items-center gap-3 rounded-lg p-2.5 text-left transition hover:bg-muted"
+                      >
+                        <div className="relative shrink-0">
+                          <Avatar className="h-9 w-9">
+                            <AvatarImage src={u.avatarUrl} />
+                            <AvatarFallback>
+                              {u.userName.substring(0, 2).toUpperCase()}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span
+                            className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full ring-2 ring-background ${
+                              isOnline ? 'bg-emerald-500' : 'bg-zinc-400'
+                            }`}
+                            title={isOnline ? 'Online' : 'Offline'}
+                          />
+                        </div>
+                        <div className="flex flex-col min-w-0 flex-1">
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium text-sm truncate">
+                              {u.userName}
+                            </span>
+                            <span
+                              className={`text-[10px] ${
+                                isOnline
+                                  ? 'text-emerald-500 font-medium'
+                                  : 'text-muted-foreground'
+                              }`}
+                            >
+                              {isOnline ? 'Online' : 'Offline'}
+                            </span>
+                          </div>
+                          <span className="text-xs text-muted-foreground truncate">
+                            {u.email || `User #${u.id}`}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })
                 )}
               </div>
             </div>
@@ -189,6 +213,9 @@ export function ChatSidebar({
             const title =
               conv.isGroup && conv.groupName ? conv.groupName : other.userName;
             const isSelected = activeConversation?._id === conv._id;
+            const isOtherOnline = !conv.isGroup && other.userId
+              ? onlineUserIds.includes(String(other.userId))
+              : false;
 
             return (
               <button
@@ -200,16 +227,26 @@ export function ChatSidebar({
                     : 'hover:bg-muted text-foreground'
                 }`}
               >
-                <Avatar className="h-10 w-10 shrink-0">
-                  <AvatarImage src={other.avatarUrl} />
-                  <AvatarFallback
-                    className={
-                      isSelected ? 'bg-primary-foreground text-primary' : ''
-                    }
-                  >
-                    {title?.substring(0, 2).toUpperCase() || 'CH'}
-                  </AvatarFallback>
-                </Avatar>
+                <div className="relative shrink-0">
+                  <Avatar className="h-10 w-10">
+                    <AvatarImage src={other.avatarUrl} />
+                    <AvatarFallback
+                      className={
+                        isSelected ? 'bg-primary-foreground text-primary' : ''
+                      }
+                    >
+                      {title?.substring(0, 2).toUpperCase() || 'CH'}
+                    </AvatarFallback>
+                  </Avatar>
+                  {!conv.isGroup && (
+                    <span
+                      className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full ring-2 ${
+                        isSelected ? 'ring-primary' : 'ring-background'
+                      } ${isOtherOnline ? 'bg-emerald-500' : 'bg-zinc-400'}`}
+                      title={isOtherOnline ? 'Online' : 'Offline'}
+                    />
+                  )}
+                </div>
                 <div className="flex min-w-0 flex-1 flex-col">
                   <div className="flex items-center justify-between">
                     <span className="truncate font-medium text-sm">
