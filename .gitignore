@@ -37,3 +37,6 @@ npm-debug.log*
 # Misc
 .DS_Store
 *.pem
+
+# Local output of the failure-demo scripts
+report/scripts/*.log
