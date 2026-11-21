@@ -55,7 +55,6 @@ export function ChatContainer() {
     scrollToBottom();
   }, [messages]);
 
-  // Load conversations
   const loadConversations = async () => {
     setConversationsError(false);
     try {
@@ -73,7 +72,6 @@ export function ChatContainer() {
     }
   };
 
-  // Load available users for starting chat
   const loadAvailableUsers = async () => {
     try {
       const res = await api.get('/users');
@@ -86,7 +84,6 @@ export function ChatContainer() {
     }
   };
 
-  // Load messages for active conversation
   const loadMessages = async (conversationId: string) => {
     setIsLoadingMessages(true);
     setMessagesError(false);
@@ -107,7 +104,6 @@ export function ChatContainer() {
     }
   };
 
-  // Initialize Socket.IO connection
   useEffect(() => {
     if (!user || isDisconnected) {
       if (socketRef.current) {
@@ -127,28 +123,7 @@ export function ChatContainer() {
     const setupSocket = async () => {
       setSocketStatus('connecting');
 
-      const fetchFreshToken = async (): Promise<string> => {
-        try {
-          const tokenRes = await fetch('/api/auth/token');
-          const tokenJson = await tokenRes.json();
-          if (tokenJson.token) {
-            return tokenJson.token;
-          }
-          await refreshSession();
-          const retryRes = await fetch('/api/auth/token');
-          const retryJson = await retryRes.json();
-          return retryJson.token || '';
-        } catch (e) {
-          console.warn('Could not fetch token for WS:', e);
-          return '';
-        }
-      };
-
       socket = io(selectedGateway, {
-        auth: async (cb: (data: { token?: string }) => void) => {
-          const freshToken = await fetchFreshToken();
-          cb({ token: freshToken });
-        },
         withCredentials: true,
         transports: ['websocket'],
       });
@@ -210,7 +185,13 @@ export function ChatContainer() {
 
       socket.on(
         'userStatusChanged',
-        ({ userId, status }: { userId: string; status: 'online' | 'offline' }) => {
+        ({
+          userId,
+          status,
+        }: {
+          userId: string;
+          status: 'online' | 'offline';
+        }) => {
           setOnlineUserIds((prev) => {
             if (status === 'online') {
               if (prev.includes(userId)) return prev;
@@ -283,7 +264,6 @@ export function ChatContainer() {
     };
   }, [user, selectedGateway, isDisconnected]);
 
-  // When active conversation changes, join room & fetch history
   useEffect(() => {
     if (activeConversation) {
       loadMessages(activeConversation._id);
@@ -386,7 +366,6 @@ export function ChatContainer() {
     deliverMessage(failed);
   };
 
-  // Start new conversation with a selected user
   const handleStartChatWithUser = async (targetUser: UserSummary) => {
     try {
       const res = await api.post('/chat/conversations', {

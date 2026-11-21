@@ -9,6 +9,8 @@ jest.mock('dotenv', () => ({
       MONGO_URI: 'mongodb://localhost/chat',
       RABBITMQ_URL: 'amqp://localhost',
       REDIS_URL: 'redis://localhost',
+      JWT_SECRET: 'test-jwt-secret-minimum-16-chars',
+      REFRESH_JWT_SECRET: 'test-refresh-jwt-secret-minimum-16-chars',
     });
   }),
 }));
@@ -21,6 +23,8 @@ describe('replication environment validation', () => {
     MONGO_URI: 'mongodb://localhost/chat',
     RABBITMQ_URL: 'amqp://localhost',
     REDIS_URL: 'redis://localhost',
+    JWT_SECRET: 'test-jwt-secret-minimum-16-chars',
+    REFRESH_JWT_SECRET: 'test-refresh-jwt-secret-minimum-16-chars',
   };
 
   it('accepts a MongoDB seed list and PostgreSQL reader URL', () => {

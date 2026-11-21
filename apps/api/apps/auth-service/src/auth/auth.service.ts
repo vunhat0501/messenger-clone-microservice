@@ -37,29 +37,35 @@ export class AuthService {
 
     const hashedPassword = await hash(createAuthDto.password);
 
-    const createdAuth = await this.dataSource.transaction(
+    const savedUser = await this.dataSource.transaction(
       async (transactionalEntityManager) => {
         const newUser = transactionalEntityManager.create(User, {
           userName: createAuthDto.userName,
           email: createAuthDto.email,
         });
-        const savedUser = await transactionalEntityManager.save(User, newUser);
+        const saved = await transactionalEntityManager.save(User, newUser);
         const newAuth = transactionalEntityManager.create(Auth, {
           hashedPassword,
           authProvider: 'local',
-          user: savedUser,
+          user: saved,
         });
 
-        return transactionalEntityManager.save(Auth, newAuth);
+        await transactionalEntityManager.save(Auth, newAuth);
+        return saved;
       },
     );
 
     await this.userService.invalidateUserCache(
-      createdAuth.user?.id,
+      savedUser.id,
       createAuthDto.userName,
     );
 
-    return createdAuth;
+    return {
+      id: savedUser.id,
+      userName: savedUser.userName,
+      email: savedUser.email,
+      createdAt: savedUser.createdAt,
+    };
   }
 
   async validateLocalUser(

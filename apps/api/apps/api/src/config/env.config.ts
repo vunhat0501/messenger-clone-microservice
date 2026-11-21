@@ -49,6 +49,8 @@ export const envSchema = z.object({
       /^mongodb(?:\+srv)?:\/\/[^\s/]+(?:\/[^\s]*)?$/,
       'MONGO_URI must be a MongoDB connection string',
     ),
+  MONGO_REPLICA_URL: z.string().optional(),
+  MONGO_REPLICA_2_URL: z.string().optional(),
   MONGO_USER: z.string().default('admin'),
   MONGO_PASS: z.string().default('password'),
   MONGO_REPLICA_SET: z.string().trim().min(1).optional(),
@@ -88,9 +90,21 @@ export const envSchema = z.object({
     })
     .url('REDIS_URL must be a valid url'),
 
-  JWT_SECRET: z.string().default('secret'),
+  JWT_SECRET: z
+    .string({
+      required_error: 'JWT_SECRET is required',
+      invalid_type_error: 'JWT_SECRET must be a string',
+      message: 'Please add JWT_SECRET to .env file',
+    })
+    .min(16, 'JWT_SECRET must be at least 16 characters long'),
   JWT_EXPIRES_IN: z.coerce.number().default(300),
-  REFRESH_JWT_SECRET: z.string().default('secret'),
+  REFRESH_JWT_SECRET: z
+    .string({
+      required_error: 'REFRESH_JWT_SECRET is required',
+      invalid_type_error: 'REFRESH_JWT_SECRET must be a string',
+      message: 'Please add REFRESH_JWT_SECRET to .env file',
+    })
+    .min(16, 'REFRESH_JWT_SECRET must be at least 16 characters long'),
   REFRESH_JWT_EXPIRES_IN: z.coerce.number().default(604800),
 });
 

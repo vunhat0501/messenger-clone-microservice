@@ -64,10 +64,15 @@ if [ "$needs_sync" -eq 1 ]; then
     unset PGPASSWORD
 fi
 
-# Never silently start an existing primary data directory as a standby.
+# If this node was promoted to Primary and no other node is Primary, start it as Primary!
 if [ ! -f "$PGDATA/standby.signal" ]; then
-    echo 'Refusing to start: this data directory is not a PostgreSQL standby.' >&2
-    exit 1
+    if [ "$active_primary" = "$HOSTNAME" ] || [ "$active_primary" = "error" ] || [ -z "$active_primary" ]; then
+        echo "This node was promoted to PRIMARY and no other remote primary exists. Starting as PRIMARY..."
+        exec docker-entrypoint.sh postgres -c wal_level=replica -c max_wal_senders=10 -c max_replication_slots=10 -c hot_standby=on
+    else
+        echo "Refusing to start: this data directory has no standby.signal but another active primary was found ($active_primary)." >&2
+        exit 1
+    fi
 fi
 export PGPASSFILE="$PGDATA/.pgpass"
 unset PG_REPL_PASSWORD

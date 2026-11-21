@@ -29,7 +29,19 @@ import {
 
 @WebSocketGateway({
   cors: {
-    origin: '*',
+    origin: (origin, callback) => {
+      const allowedOrigins = [
+        env.FRONTEND_URL,
+        'http://localhost:3000',
+        'http://localhost:80',
+        'http://localhost:8080',
+      ];
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`Origin ${origin} not allowed by CORS`));
+      }
+    },
     credentials: true,
   },
 })

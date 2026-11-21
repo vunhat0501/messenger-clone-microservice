@@ -12,25 +12,33 @@ jest.mock('apps/api/src/config/env.config', () => ({
   },
 }));
 
+jest.mock('apps/auth-service/src/database/pg-topology.resolver', () => ({
+  resolvePostgresTopology: async (urls: string[]) => ({
+    masterUrl: urls[0],
+    slaveUrls: urls.slice(1),
+  }),
+}));
+
 describe('database replication configuration', () => {
   afterEach(() => {
     env.DATABASE_REPLICA_URL = undefined;
     env.MONGO_REPLICA_SET = undefined;
   });
 
-  it('uses the writer URL without overriding its credentials in standalone mode', () => {
-    expect(postgresConfig()).toMatchObject({
+  it('uses the writer URL without overriding its credentials in standalone mode', async () => {
+    const config = await postgresConfig();
+    expect(config).toMatchObject({
       url: env.DATABASE_URL,
       synchronize: false,
     });
-    expect(postgresConfig().replication).toBeUndefined();
-    expect(postgresConfig().host).toBeUndefined();
+    expect(config.replication).toBeUndefined();
+    expect(config.host).toBeUndefined();
   });
 
-  it('keeps authentication reads and writes on the writer when a replica is configured', () => {
+  it('keeps authentication reads and writes on the writer when a replica is configured', async () => {
     env.DATABASE_REPLICA_URL =
       'postgresql://reader:password@localhost:5433/auth';
-    expect(postgresConfig().replication).toEqual({
+    expect((await postgresConfig()).replication).toEqual({
       master: { url: env.DATABASE_URL },
       slaves: [{ url: env.DATABASE_REPLICA_URL }],
       defaultMode: 'master',
