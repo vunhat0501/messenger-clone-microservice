@@ -20,6 +20,14 @@ export class TransformInterceptor<T> implements NestInterceptor<
     context: ExecutionContext,
     next: CallHandler,
   ): Observable<Response<T>> {
+    const http = context.switchToHttp();
+    const response = http?.getResponse();
+    if (response && typeof response.setHeader === 'function') {
+      const instanceId =
+        process.env.INSTANCE_ID || `gateway-${process.env.PORT || 8008}`;
+      response.setHeader('X-Instance-Id', instanceId);
+    }
+
     return next
       .handle()
       .pipe()

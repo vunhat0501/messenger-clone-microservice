@@ -41,6 +41,7 @@ interface ChatSidebarProps {
   currentUserId?: string;
   currentUserName?: string;
   onlineUserIds?: string[];
+  activeInstanceId?: string;
 }
 
 export function ChatSidebar({
@@ -61,6 +62,7 @@ export function ChatSidebar({
   currentUserId,
   currentUserName,
   onlineUserIds = [],
+  activeInstanceId,
 }: ChatSidebarProps) {
   const getOtherParticipant = (conv: ConversationItem): Participant => {
     if (conv.participants && conv.participants.length > 0) {
@@ -302,6 +304,7 @@ export function ChatSidebar({
             />
             <span className="text-[11px] capitalize">
               {isDisconnected ? 'disconnected' : socketStatus}
+              {!isDisconnected && activeInstanceId ? ` (${activeInstanceId})` : ''}
             </span>
           </div>
         </div>

@@ -77,6 +77,7 @@ export class ChatServiceController {
       conversationId: string;
       senderId: string;
       text: string;
+      clientMessageId?: string;
     },
   ) {
     return this.chatServiceService.saveMessage(data);
@@ -89,6 +90,7 @@ export class ChatServiceController {
       conversationId: string;
       senderId: string;
       text: string;
+      clientMessageId?: string;
     },
   ) {
     return this.chatServiceService.saveMessage(data);

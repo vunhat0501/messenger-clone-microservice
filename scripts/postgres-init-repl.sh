@@ -10,6 +10,7 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
     --set=repl_user="$PG_REPL_USER" --set=repl_password="$PG_REPL_PASSWORD" <<'EOSQL'
 CREATE USER :"repl_user" WITH REPLICATION LOGIN ENCRYPTED PASSWORD :'repl_password';
 SELECT pg_create_physical_replication_slot('auth_replica');
+SELECT pg_create_physical_replication_slot('auth_replica_2');
 EOSQL
 
 # The image's default host rule does not permit physical replication connections.

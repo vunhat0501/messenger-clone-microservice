@@ -46,14 +46,16 @@ flowchart TB
   end
 
   subgraph Databases ["Database Tier"]
-    subgraph RelationalDB ["PostgreSQL Cluster"]
+    subgraph RelationalDB ["PostgreSQL Cluster (1 Primary + 2 Replicas)"]
       SQL_Pri[("PostgreSQL Primary (:5432)<br/>WAL Level: replica")]:::db
-      SQL_Rep[("PostgreSQL Replica (:5433)<br/>Hot Standby")]:::db
+      SQL_Rep[("PostgreSQL Replica 1 (:5433)<br/>Hot Standby")]:::db
+      SQL_Rep2[("PostgreSQL Replica 2 (:5434)<br/>Hot Standby")]:::db
     end
 
-    subgraph DocumentDB ["MongoDB Replica Set (rs0)"]
+    subgraph DocumentDB ["MongoDB Replica Set rs0 (1 Primary + 2 Replicas)"]
       NoSQL_Pri[("MongoDB Primary (:27017)<br/>Priority: 2")]:::db
-      NoSQL_Rep[("MongoDB Secondary (:27018)<br/>Priority: 1")]:::db
+      NoSQL_Rep[("MongoDB Secondary 1 (:27018)<br/>Priority: 1")]:::db
+      NoSQL_Rep2[("MongoDB Secondary 2 (:27019)<br/>Priority: 1")]:::db
     end
   end
 
@@ -82,12 +84,16 @@ flowchart TB
   %% Services to Relational Database
   AuthSvc -->|"Writes & Primary Reads"| SQL_Pri
   AuthSvc -->|"Read-Only Directory Queries"| SQL_Rep
+  AuthSvc -->|"Read-Only Directory Queries"| SQL_Rep2
   SQL_Pri -.->|"Physical Streaming Replication"| SQL_Rep
+  SQL_Pri -.->|"Physical Streaming Replication"| SQL_Rep2
 
   %% Services to Document Database
   ChatSvc -->|"Writes (w: majority)"| NoSQL_Pri
   ChatSvc -->|"secondaryPreferred Reads"| NoSQL_Rep
+  ChatSvc -->|"secondaryPreferred Reads"| NoSQL_Rep2
   NoSQL_Pri -.->|"Oplog Sync & Heartbeats"| NoSQL_Rep
+  NoSQL_Pri -.->|"Oplog Sync & Heartbeats"| NoSQL_Rep2
 ```
 
 ---

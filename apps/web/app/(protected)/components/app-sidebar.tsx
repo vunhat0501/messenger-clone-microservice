@@ -1,6 +1,6 @@
 'use client';
 
-import { usePathname, useRouter, useParams } from 'next/navigation'; // <-- Thêm useParams
+import { usePathname, useRouter, useParams } from 'next/navigation';
 import {
   Sparkles,
   User as UserIcon,
@@ -8,7 +8,6 @@ import {
   LogOut,
   ChevronsUpDown,
   MessageSquare,
-  Hash,
   PlusCircle,
 } from 'lucide-react';
 import { CreatePostModal } from './create-post-modal';
@@ -58,8 +57,6 @@ export function AppSidebar() {
   };
 
   const navItems = [
-    { title: 'For You', url: '/fyp', icon: Sparkles },
-    { title: 'Explore', url: '/explore', icon: Hash },
     { title: 'Messages', url: '/messages', icon: MessageSquare },
     {
       title: 'Profile',

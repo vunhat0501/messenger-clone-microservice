@@ -236,11 +236,13 @@ export class ChatServiceService {
       .find({
         conversationId: new Types.ObjectId(conversationId),
       })
-      .sort({ createdAt: 1 })
+      .sort({ createdAt: -1 })
       .read(env.MONGO_READ_PREFERENCE)
       .limit(limit)
       .lean()
       .exec();
+
+    messages.reverse();
 
     await this.cacheManager.set(cacheKey, messages, CACHE_TTL.MESSAGES);
     return messages;
@@ -250,9 +252,20 @@ export class ChatServiceService {
     conversationId: string;
     senderId: string;
     text: string;
+    clientMessageId?: string;
   }) {
     if (!Types.ObjectId.isValid(payload.conversationId)) {
       throw new RpcException('Invalid conversation ID');
+    }
+
+    if (payload.clientMessageId) {
+      const existingMessage = await this.messageModel.findOne({
+        conversationId: new Types.ObjectId(payload.conversationId),
+        clientMessageId: payload.clientMessageId,
+      });
+      if (existingMessage) {
+        return existingMessage;
+      }
     }
 
     const conv = await this.conversationModel.findOne({
@@ -270,6 +283,9 @@ export class ChatServiceService {
       senderId: payload.senderId,
       text: payload.text,
       readBy: [payload.senderId],
+      ...(payload.clientMessageId
+        ? { clientMessageId: payload.clientMessageId }
+        : {}),
     });
 
     await this.conversationModel.findByIdAndUpdate(payload.conversationId, {

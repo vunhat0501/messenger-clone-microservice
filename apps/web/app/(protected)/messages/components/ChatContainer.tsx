@@ -34,6 +34,7 @@ export function ChatContainer() {
       ? process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:80'
       : 'http://localhost:80',
   );
+  const [activeInstanceId, setActiveInstanceId] = useState<string>('');
 
   const socketRef = useRef<Socket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -114,17 +115,33 @@ export function ChatContainer() {
 
     const setupSocket = async () => {
       setSocketStatus('connecting');
-      let token = '';
-      try {
-        const tokenRes = await fetch('/api/auth/token');
-        const tokenJson = await tokenRes.json();
-        token = tokenJson.token || '';
-      } catch (e) {
-        console.warn('Could not fetch token for WS:', e);
-      }
+
+      const fetchFreshToken = async (): Promise<string> => {
+        try {
+          const tokenRes = await fetch('/api/auth/token');
+          const tokenJson = await tokenRes.json();
+          if (tokenJson.token) {
+            return tokenJson.token;
+          }
+          // Attempt refresh if access token expired or missing
+          const refreshRes = await fetch('/api/auth/refresh', { method: 'POST' });
+          if (refreshRes.ok) {
+            const retryRes = await fetch('/api/auth/token');
+            const retryJson = await retryRes.json();
+            return retryJson.token || '';
+          }
+          return '';
+        } catch (e) {
+          console.warn('Could not fetch token for WS:', e);
+          return '';
+        }
+      };
 
       socket = io(selectedGateway, {
-        auth: { token },
+        auth: async (cb: (data: { token?: string }) => void) => {
+          const freshToken = await fetchFreshToken();
+          cb({ token: freshToken });
+        },
         withCredentials: true,
         transports: ['websocket'],
       });
@@ -140,12 +157,24 @@ export function ChatContainer() {
         }
       });
 
+      socket.on(
+        'gatewayConnected',
+        ({ instanceId }: { instanceId: string }) => {
+          setActiveInstanceId(instanceId);
+        },
+      );
+
       socket.on('disconnect', () => {
         setSocketStatus('disconnected');
       });
 
-      socket.on('connect_error', () => {
+      socket.on('connect_error', async (err) => {
+        console.warn('Socket connect_error:', err.message);
         setSocketStatus('disconnected');
+        // If rejected due to token, try refreshing cookie in background so next reconnect retry succeeds
+        try {
+          await fetch('/api/auth/refresh', { method: 'POST' });
+        } catch {}
       });
 
       socket.on('onlineUsers', (userIds: string[]) => {
@@ -242,16 +271,24 @@ export function ChatContainer() {
 
     const text = newMessage.trim();
     setNewMessage('');
+    const clientMessageId =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
     if (socketRef.current?.connected) {
-      socketRef.current.emit(
+      socketRef.current.timeout(10000).emit(
         'sendMessage',
         {
           conversationId: activeConversation._id,
           text,
-          senderId: user.id,
+          clientMessageId,
         },
-        (savedMsg: ChatMessage) => {
+        (err: any, savedMsg: ChatMessage) => {
+          if (err) {
+            console.error('Socket message send timed out or failed:', err);
+            return;
+          }
           if (savedMsg && savedMsg._id) {
             setMessages((prev) => {
               if (prev.some((m) => m._id === savedMsg._id)) return prev;
@@ -264,7 +301,7 @@ export function ChatContainer() {
       try {
         const res = await api.post(
           `/chat/conversations/${activeConversation._id}/messages`,
-          { text },
+          { text, clientMessageId },
         );
         const savedMsg = res.data?.data || res.data;
 
@@ -335,6 +372,7 @@ export function ChatContainer() {
         currentUserId={user?.id}
         currentUserName={user?.name}
         onlineUserIds={onlineUserIds}
+        activeInstanceId={activeInstanceId}
       />
 
       <ChatArea

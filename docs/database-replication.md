@@ -18,6 +18,7 @@ PG_REPL_USER=replicator
 PG_REPL_PASSWORD=replace-with-a-separate-replication-password
 DATABASE_URL=postgresql://postgres:replace-me@localhost:5432/social
 DATABASE_REPLICA_URL=postgresql://postgres:replace-me@localhost:5433/social
+DATABASE_REPLICA_2_URL=postgresql://postgres:replace-me@localhost:5434/social
 
 MONGO_USER=admin
 MONGO_PASS=replace-me
@@ -28,11 +29,10 @@ MONGO_READ_PREFERENCE=secondaryPreferred
 For Chat running **inside the Compose network**, use:
 
 ```dotenv
-MONGO_URI=mongodb://admin:replace-me@mongo_primary:27017,mongo_replica:27017/chat?authSource=admin
+MONGO_URI=mongodb://admin:replace-me@mongo_primary:27017,mongo_replica:27017,mongo_replica_2:27017/chat?authSource=admin
 ```
 
-For Auth inside that network, use `postgres_primary:5432` and
-`postgres_replica:5432` instead of the host endpoints above.
+For Auth inside that network, use `postgres_primary:5432`, `postgres_replica:5432`, and `postgres_replica_2:5432` instead of the host endpoints above.
 
 MongoDB drivers discover the member addresses advertised by `rs0`, which are
 `mongo_primary:27017` and `mongo_replica:27017`. Both addresses must resolve and
@@ -60,7 +60,7 @@ Check existing containers before starting the databases:
 
 ```sh
 docker compose ps
-docker compose up -d postgres_primary postgres_replica mongo_primary mongo_replica mongo_init_rs
+docker compose up -d postgres_primary postgres_replica postgres_replica_2 mongo_primary mongo_replica mongo_replica_2 mongo_init_rs
 docker compose logs mongo_init_rs
 ```
 
@@ -117,6 +117,36 @@ Expect PostgreSQL `streaming`, `pg_is_in_recovery() = true`, and one MongoDB
 `PRIMARY` plus one `SECONDARY`. Verify an application write on the primary
 becomes visible on the replica. The scripts use LF endings via `.gitattributes`;
 retain executable modes when copying them to Linux.
+
+## Failover and Promotion
+
+### PostgreSQL Automatic Failover & Promotion
+A dedicated health monitoring daemon container (`postgres_sentinel`) monitors the primary database every 5 seconds.
+- **Automatic Detection**: When `postgres_primary` fails 3 consecutive health checks (15 seconds), Sentinel logs a failure alert.
+- **Automatic Standby Promotion**: Sentinel invokes `SELECT pg_promote();` on `postgres_replica` (or falls back to `postgres_replica_2` if the first replica is unavailable), immediately elevating it to read-write `PRIMARY`.
+- **Driver Auto-Routing**: With `targetServerType=primary` configured in `DATABASE_URL` (e.g., `postgresql://user:pass@localhost:5432,localhost:5433,localhost:5434/postgres?targetServerType=primary`), TypeORM and `node-postgres` automatically probe each host in order and reconnect writes directly to whichever node is currently not in recovery (`pg_is_in_recovery() = false`), requiring zero manual intervention or application server restarts.
+
+### PostgreSQL Manual Failover (Optional)
+You can still manually promote a replica on demand via SQL if desired:
+
+```sh
+# Promote postgres_replica (port 5433)
+docker compose exec postgres_replica psql -U postgres -d postgres -c "SELECT pg_promote();"
+
+# Or promote postgres_replica_2 (port 5434)
+docker compose exec postgres_replica_2 psql -U postgres -d postgres -c "SELECT pg_promote();"
+```
+
+### MongoDB Automatic Failover
+With a **3-node replica set** (`mongo_primary`, `mongo_replica`, `mongo_replica_2`), MongoDB performs **automatic election and promotion** via Raft-like consensus:
+- If `mongo_primary` goes down, the 2 remaining secondaries form a majority quorum (2 out of 3 votes) and automatically elect a new `PRIMARY`.
+- MongoDB drivers and Mongoose automatically discover the new primary node and reroute write operations without downtime or manual reconfiguration.
+- When `mongo_primary` recovers, it rejoins the replica set as a `SECONDARY` and catches up via oplog.
+
+To manually trigger or test election in MongoDB:
+```sh
+docker compose exec mongo_primary mongosh -u admin -p password --authenticationDatabase admin --eval "rs.stepDown(60)"
+```
 
 ## Availability limits
 

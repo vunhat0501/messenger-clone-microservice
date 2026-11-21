@@ -21,6 +21,7 @@ export const envSchema = z.object({
     })
     .url('DATABASE_URL must be a valid url'),
   DATABASE_REPLICA_URL: z.string().url().optional(),
+  DATABASE_REPLICA_2_URL: z.string().url().optional(),
   PG_REPL_USER: z
     .string()
     .regex(/^[a-z_][a-z0-9_]*$/)

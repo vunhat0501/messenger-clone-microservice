@@ -134,13 +134,14 @@ export class ChatGatewayController {
   async sendMessage(
     @Param('id') conversationId: string,
     @GetUser() user: AuthenticatedUser,
-    @Body() body: { text: string },
+    @Body() body: { text: string; clientMessageId?: string },
   ) {
     const savedMessage = await firstValueFrom(
       this.chatClient.send('save_message', {
         conversationId,
         senderId: user.id,
         text: body.text,
+        clientMessageId: body.clientMessageId,
       }),
     );
 

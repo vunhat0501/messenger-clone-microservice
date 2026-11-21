@@ -21,8 +21,15 @@ export class Message {
 
   @Prop({ type: [String], default: [] })
   readBy: string[];
+
+  @Prop({ type: String, sparse: true, index: true })
+  clientMessageId?: string;
 }
 
 export const messageSchema = SchemaFactory.createForClass(Message);
 export const MessageSchema = messageSchema;
 messageSchema.index({ conversationId: 1, createdAt: -1 });
+messageSchema.index(
+  { conversationId: 1, clientMessageId: 1 },
+  { sparse: true, unique: true },
+);

@@ -10,7 +10,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { ClientProxy } from '@nestjs/microservices';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, timeout, catchError, throwError, TimeoutError } from 'rxjs';
 import { JwtService } from '@nestjs/jwt';
 import { env } from 'apps/api/src/config/env.config';
 import { PresenceService } from './presence.service';
@@ -50,44 +50,53 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         token = cookies['access_token'];
       }
 
-      if (token) {
-        const payload = this.jwtService.verify(token, {
-          secret: env.JWT_SECRET,
-        });
-        client.data.user = payload;
-        (client as any).user = {
+      if (!token) {
+        this.logger.warn(`Socket connection rejected: No token provided (${client.id})`);
+        client.emit('auth_error', { message: 'Authentication token required' });
+        client.disconnect(true);
+        return;
+      }
+
+      const payload = this.jwtService.verify(token, {
+        secret: env.JWT_SECRET,
+      });
+      client.data.user = payload;
+      (client as any).user = {
+        userId: payload.sub,
+        name: payload.name,
+        email: payload.email,
+      };
+      this.logger.log(
+        `Socket client connected: ${client.id} (user: ${payload.sub})`,
+      );
+
+      // Register connection for presence tracking
+      const becameOnline = await this.presenceService.addConnection(
+        payload.sub,
+        client.id,
+      );
+
+      // Send current online users list to connecting client
+      const onlineUsers = await this.presenceService.getOnlineUsers();
+      client.emit('onlineUsers', onlineUsers);
+
+      const instanceId =
+        process.env.INSTANCE_ID || `gateway-${process.env.PORT || 8008}`;
+      client.emit('gatewayConnected', { instanceId });
+
+      // Broadcast status change if user just became online
+      if (becameOnline) {
+        this.server.emit('userStatusChanged', {
           userId: payload.sub,
-          name: payload.name,
-          email: payload.email,
-        };
-        this.logger.log(
-          `Socket client connected: ${client.id} (user: ${payload.sub})`,
-        );
-
-        // Register connection for presence tracking
-        const becameOnline = await this.presenceService.addConnection(
-          payload.sub,
-          client.id,
-        );
-
-        // Send current online users list to connecting client
-        const onlineUsers = await this.presenceService.getOnlineUsers();
-        client.emit('onlineUsers', onlineUsers);
-
-        // Broadcast status change if user just became online
-        if (becameOnline) {
-          this.server.emit('userStatusChanged', {
-            userId: payload.sub,
-            status: 'online',
-          });
-        }
-      } else {
-        this.logger.warn(`Socket client connected without token: ${client.id}`);
+          status: 'online',
+        });
       }
     } catch (err: any) {
       this.logger.warn(
-        `Socket connection token verification failed: ${err.message}`,
+        `Socket connection token verification failed (${client.id}): ${err.message}`,
       );
+      client.emit('auth_error', { message: 'Invalid or expired token' });
+      client.disconnect(true);
     }
   }
 
@@ -143,33 +152,51 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('sendMessage')
   async handleMessage(
     @MessageBody()
-    payload: { text: string; conversationId: string; senderId?: string },
+    payload: {
+      text: string;
+      conversationId: string;
+      clientMessageId?: string;
+    },
     @ConnectedSocket() client: Socket,
   ) {
     const senderId =
-      client.data?.user?.sub ??
-      (client as any).user?.userId ??
-      payload.senderId;
+      client.data?.user?.sub ?? (client as any).user?.userId;
 
     if (!senderId) {
       return { error: 'Unauthorized sender' };
     }
 
-    const savedMessage = await firstValueFrom(
-      this.chatClient.send('save_message', {
+    try {
+      const savedMessage = await firstValueFrom(
+        this.chatClient
+          .send('save_message', {
+            conversationId: payload.conversationId,
+            text: payload.text,
+            senderId,
+            clientMessageId: payload.clientMessageId,
+          })
+          .pipe(
+            timeout(10000),
+            catchError((err) => {
+              if (err instanceof TimeoutError) {
+                return throwError(() => new Error('Message service timeout'));
+              }
+              return throwError(() => err);
+            }),
+          ),
+      );
+
+      this.server.to(payload.conversationId).emit('newMessage', savedMessage);
+      this.server.emit('conversationUpdated', {
         conversationId: payload.conversationId,
-        text: payload.text,
-        senderId,
-      }),
-    );
+        lastMessageSnippet: payload.text,
+        lastMessageAt: new Date(),
+      });
 
-    this.server.to(payload.conversationId).emit('newMessage', savedMessage);
-    this.server.emit('conversationUpdated', {
-      conversationId: payload.conversationId,
-      lastMessageSnippet: payload.text,
-      lastMessageAt: new Date(),
-    });
-
-    return savedMessage;
+      return savedMessage;
+    } catch (err: any) {
+      this.logger.error(`Error saving message: ${err.message}`);
+      return { error: err.message || 'Failed to send message' };
+    }
   }
 }

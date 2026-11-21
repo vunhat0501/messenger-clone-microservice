@@ -20,9 +20,15 @@ describe('Chat replica reads', () => {
     findOne: jest.fn(),
   };
   const messages = { find: jest.fn(() => query) };
+  const cacheManager = {
+    get: jest.fn().mockResolvedValue(null),
+    set: jest.fn().mockResolvedValue(undefined),
+    del: jest.fn().mockResolvedValue(undefined),
+  };
   const service = new ChatServiceService(
     messages as unknown as Model<MessageDocument>,
     conversations as unknown as Model<ConversationDocument>,
+    cacheManager as any,
   );
 
   beforeEach(() => jest.clearAllMocks());
