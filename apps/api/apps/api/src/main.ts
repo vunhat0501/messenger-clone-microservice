@@ -15,7 +15,7 @@ async function bootstrap() {
     credentials: true,
   });
   app.use(cookieParser());
-  app.useGlobalPipes(
+  app.useGlobalPipes( 
     new ValidationPipe({
       transform: true,
       forbidNonWhitelisted: true,

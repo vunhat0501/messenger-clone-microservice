@@ -50,5 +50,18 @@ describe('database replication configuration', () => {
 
   it('preserves hosted or standalone MongoDB discovery when unset', () => {
     expect(mongoConfig().replicaSet).toBeUndefined();
+    expect((mongoConfig() as { lookup?: unknown }).lookup).toBeUndefined();
+  });
+
+  it('resolves advertised member names through MONGO_HOST_MAP for host-based development', () => {
+    (env as { MONGO_HOST_MAP?: string }).MONGO_HOST_MAP =
+      'mongo_primary=127.0.0.1';
+    try {
+      expect(typeof (mongoConfig() as { lookup?: unknown }).lookup).toBe(
+        'function',
+      );
+    } finally {
+      (env as { MONGO_HOST_MAP?: string }).MONGO_HOST_MAP = undefined;
+    }
   });
 });

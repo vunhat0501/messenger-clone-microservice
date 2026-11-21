@@ -9,7 +9,7 @@ export const env = createEnv({
   },
 
   client: {
-    NEXT_PUBLIC_BACKEND_URL: z.string().url().default('http://localhost:8008'),
+    NEXT_PUBLIC_BACKEND_URL: z.string().url().default('http://localhost:80'),
   },
 
   experimental__runtimeEnv: {

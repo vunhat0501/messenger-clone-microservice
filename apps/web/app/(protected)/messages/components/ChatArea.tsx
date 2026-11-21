@@ -15,7 +15,7 @@ import {
 } from '@workspace/ui/components/avatar';
 import { Button } from '@workspace/ui/components/button';
 import { Input } from '@workspace/ui/components/input';
-import { Send, MessageSquare } from 'lucide-react';
+import { Send, MessageSquare, RefreshCw } from 'lucide-react';
 import {
   ChatMessage,
   ConversationItem,
@@ -27,6 +27,9 @@ interface ChatAreaProps {
   activeConversation: ConversationItem | null;
   messages: ChatMessage[];
   isLoadingMessages: boolean;
+  messagesError?: boolean;
+  onRetryLoadMessages?: () => void;
+  onRetryMessage?: (clientMessageId: string) => void;
   newMessage: string;
   setNewMessage: (msg: string) => void;
   onSendMessage: (e?: React.FormEvent) => Promise<void>;
@@ -43,6 +46,9 @@ export function ChatArea({
   activeConversation,
   messages,
   isLoadingMessages,
+  messagesError = false,
+  onRetryLoadMessages,
+  onRetryMessage,
   newMessage,
   setNewMessage,
   onSendMessage,
@@ -193,6 +199,17 @@ export function ChatArea({
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
             Loading messages...
           </div>
+        ) : messagesError ? (
+          <div
+            role="alert"
+            className="flex h-full flex-col items-center justify-center gap-3 text-center text-sm text-muted-foreground"
+          >
+            <p>Could not load messages for this conversation.</p>
+            <Button variant="outline" size="sm" onClick={onRetryLoadMessages}>
+              <RefreshCw className="h-3.5 w-3.5" />
+              Try again
+            </Button>
+          </div>
         ) : messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted-foreground">
             <MessageSquare className="mb-2 h-10 w-10 stroke-1 text-muted-foreground/40" />
@@ -219,7 +236,7 @@ export function ChatArea({
 
               return (
                 <Message
-                  key={msg._id}
+                  key={msg.clientMessageId ?? msg._id}
                   align={isMe ? 'end' : 'start'}
                   className="group"
                 >
@@ -250,12 +267,46 @@ export function ChatArea({
                         isMe
                           ? 'bg-primary text-primary-foreground rounded-br-xs'
                           : 'bg-muted text-foreground rounded-bl-xs'
+                      } ${msg.status === 'sending' ? 'opacity-70' : ''} ${
+                        msg.status === 'failed'
+                          ? 'ring-1 ring-rose-500/60'
+                          : ''
                       }`}
                     >
                       <p className="wrap-break-words leading-relaxed">
                         {msg.text}
                       </p>
                     </div>
+                    {msg.status === 'sending' && (
+                      <p
+                        aria-live="polite"
+                        className="mt-1 text-right text-[11px] text-muted-foreground"
+                      >
+                        Sending...
+                      </p>
+                    )}
+                    {msg.status === 'failed' && (
+                      <div
+                        role="alert"
+                        className="mt-1 flex items-center justify-end gap-1 text-[11px] text-rose-500 dark:text-rose-400"
+                      >
+                        <span>Not sent</span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-2 text-[11px] text-rose-500 hover:text-rose-500 dark:text-rose-400 dark:hover:text-rose-400"
+                          aria-label="Retry sending this message"
+                          onClick={() =>
+                            msg.clientMessageId &&
+                            onRetryMessage?.(msg.clientMessageId)
+                          }
+                        >
+                          <RefreshCw className="h-3 w-3" />
+                          Retry
+                        </Button>
+                      </div>
+                    )}
                   </MessageContent>
                 </Message>
               );

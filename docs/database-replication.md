@@ -29,25 +29,37 @@ MONGO_READ_PREFERENCE=secondaryPreferred
 For Chat running **inside the Compose network**, use:
 
 ```dotenv
-MONGO_URI=mongodb://admin:replace-me@mongo_primary:27017,mongo_replica:27017,mongo_replica_2:27017/chat?authSource=admin
+MONGO_URI=mongodb://admin:replace-me@mongo_primary:27017,mongo_replica:27018,mongo_replica_2:27019/chat?authSource=admin
 ```
 
 For Auth inside that network, use `postgres_primary:5432`, `postgres_replica:5432`, and `postgres_replica_2:5432` instead of the host endpoints above.
 
-MongoDB drivers discover the member addresses advertised by `rs0`, which are
-`mongo_primary:27017` and `mongo_replica:27017`. Both addresses must resolve and
-route correctly from Chat. The repository's host-based `pnpm dev` cannot discover
-both members through the published localhost ports alone: a hosts-file alias is
-insufficient because the secondary advertises port 27017 but publishes 27018.
-Run Chat on the Compose network or provide routing/DNS for both advertised
-addresses. For a host-based development connection to the primary only, use:
+MongoDB drivers connect to the member addresses advertised by `rs0`:
+`mongo_primary:27017`, `mongo_replica:27018` and `mongo_replica_2:27019`. Each
+`mongod` listens on the same port it publishes, so only the names need resolving.
+For the repository's host-based `pnpm dev`, map those names to the published
+ports on the host instead of editing the hosts file:
 
 ```dotenv
-MONGO_URI=mongodb://admin:replace-me@localhost:27017/chat?authSource=admin&directConnection=true
-MONGO_READ_PREFERENCE=primary
+MONGO_URI=mongodb://admin:replace-me@localhost:27017,localhost:27018,localhost:27019/chat?authSource=admin
+MONGO_REPLICA_SET=rs0
+MONGO_HOST_MAP=mongo_primary=127.0.0.1,mongo_replica=127.0.0.1,mongo_replica_2=127.0.0.1
 ```
 
-Direct connections do not provide replica read distribution or failover.
+Chat then follows a newly elected primary. Do not set `MONGO_HOST_MAP` when Chat
+runs on the Compose network or against a hosted database.
+
+Sets created before the members had their own ports advertise
+`mongo_replica:27017`. Recreate the two secondaries and rerun the init service;
+it renames the members in place and keeps the data volumes:
+
+```bash
+docker compose up -d --wait mongo_replica mongo_replica_2
+docker compose up mongo_init_rs
+```
+
+A `directConnection=true` URI to `localhost:27017` still works, but it talks to
+that one node only: no replica read distribution and no failover.
 For existing hosted databases, omit `DATABASE_REPLICA_URL` and
 `MONGO_REPLICA_SET` unless the provider supplies corresponding replica endpoints
 or a replica set name. Existing MongoDB URI replica set discovery still works.

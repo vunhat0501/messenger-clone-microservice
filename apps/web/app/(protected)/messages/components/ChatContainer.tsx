@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useRef } from 'react';
-import { api } from '@/lib/api';
+import { api, refreshSession } from '@/lib/api';
 import { useAuthStore } from '@/store/useAuthStore';
 import { io, Socket } from 'socket.io-client';
 import {
@@ -24,6 +24,8 @@ export function ChatContainer() {
   const [availableUsers, setAvailableUsers] = useState<UserSummary[]>([]);
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+  const [conversationsError, setConversationsError] = useState(false);
+  const [messagesError, setMessagesError] = useState(false);
   const [socketStatus, setSocketStatus] = useState<SocketStatus>('connecting');
   const [isDisconnected, setIsDisconnected] = useState(false);
   const [onlineUserIds, setOnlineUserIds] = useState<string[]>([]);
@@ -55,6 +57,7 @@ export function ChatContainer() {
 
   // Load conversations
   const loadConversations = async () => {
+    setConversationsError(false);
     try {
       const res = await api.get('/chat/conversations');
       const data = res.data?.data || res.data || [];
@@ -66,6 +69,7 @@ export function ChatContainer() {
       }
     } catch (err) {
       console.error('Failed to load conversations:', err);
+      setConversationsError(true);
     }
   };
 
@@ -85,6 +89,7 @@ export function ChatContainer() {
   // Load messages for active conversation
   const loadMessages = async (conversationId: string) => {
     setIsLoadingMessages(true);
+    setMessagesError(false);
     try {
       const res = await api.get(
         `/chat/conversations/${conversationId}/messages`,
@@ -95,6 +100,8 @@ export function ChatContainer() {
       }
     } catch (err) {
       console.error('Failed to load messages:', err);
+      setMessages([]);
+      setMessagesError(true);
     } finally {
       setIsLoadingMessages(false);
     }
@@ -112,6 +119,10 @@ export function ChatContainer() {
     }
 
     let socket: Socket;
+    const MAX_AUTH_RETRIES = 3;
+    let authRetries = 0;
+    let rejectedByAuth = false;
+    let authRetryTimer: ReturnType<typeof setTimeout> | undefined;
 
     const setupSocket = async () => {
       setSocketStatus('connecting');
@@ -123,14 +134,10 @@ export function ChatContainer() {
           if (tokenJson.token) {
             return tokenJson.token;
           }
-          // Attempt refresh if access token expired or missing
-          const refreshRes = await fetch('/api/auth/refresh', { method: 'POST' });
-          if (refreshRes.ok) {
-            const retryRes = await fetch('/api/auth/token');
-            const retryJson = await retryRes.json();
-            return retryJson.token || '';
-          }
-          return '';
+          await refreshSession();
+          const retryRes = await fetch('/api/auth/token');
+          const retryJson = await retryRes.json();
+          return retryJson.token || '';
         } catch (e) {
           console.warn('Could not fetch token for WS:', e);
           return '';
@@ -160,21 +167,41 @@ export function ChatContainer() {
       socket.on(
         'gatewayConnected',
         ({ instanceId }: { instanceId: string }) => {
+          authRetries = 0;
           setActiveInstanceId(instanceId);
         },
       );
 
-      socket.on('disconnect', () => {
+      socket.on('auth_error', () => {
+        rejectedByAuth = true;
+      });
+
+      socket.on('disconnect', (reason) => {
+        if (
+          reason === 'io server disconnect' &&
+          rejectedByAuth &&
+          authRetries < MAX_AUTH_RETRIES
+        ) {
+          rejectedByAuth = false;
+          authRetries += 1;
+          setSocketStatus('connecting');
+          authRetryTimer = setTimeout(async () => {
+            try {
+              await refreshSession();
+            } catch {
+              setSocketStatus('disconnected');
+              return;
+            }
+            socket.connect();
+          }, 1000 * authRetries);
+          return;
+        }
         setSocketStatus('disconnected');
       });
 
-      socket.on('connect_error', async (err) => {
+      socket.on('connect_error', (err) => {
         console.warn('Socket connect_error:', err.message);
         setSocketStatus('disconnected');
-        // If rejected due to token, try refreshing cookie in background so next reconnect retry succeeds
-        try {
-          await fetch('/api/auth/refresh', { method: 'POST' });
-        } catch {}
       });
 
       socket.on('onlineUsers', (userIds: string[]) => {
@@ -202,6 +229,18 @@ export function ChatContainer() {
         ) {
           setMessages((prev) => {
             if (prev.some((m) => m._id === incomingMsg._id)) return prev;
+            const pendingIndex = incomingMsg.clientMessageId
+              ? prev.findIndex(
+                  (m) =>
+                    m.status &&
+                    m.clientMessageId === incomingMsg.clientMessageId,
+                )
+              : -1;
+            if (pendingIndex >= 0) {
+              const next = [...prev];
+              next[pendingIndex] = incomingMsg;
+              return next;
+            }
             return [...prev, incomingMsg];
           });
         }
@@ -237,6 +276,7 @@ export function ChatContainer() {
     setupSocket();
 
     return () => {
+      clearTimeout(authRetryTimer);
       if (socket) {
         socket.disconnect();
       }
@@ -260,6 +300,55 @@ export function ChatContainer() {
     loadAvailableUsers();
   }, [user]);
 
+  const isPendingFor = (m: ChatMessage, clientMessageId: string) =>
+    Boolean(m.status) && m.clientMessageId === clientMessageId;
+
+  const settlePending = (clientMessageId: string, saved: ChatMessage) => {
+    setMessages((prev) => {
+      if (prev.some((m) => m._id === saved._id)) {
+        return prev.filter((m) => !isPendingFor(m, clientMessageId));
+      }
+      return prev.map((m) => (isPendingFor(m, clientMessageId) ? saved : m));
+    });
+  };
+
+  const setPendingStatus = (
+    clientMessageId: string,
+    status: 'sending' | 'failed',
+  ) => {
+    setMessages((prev) =>
+      prev.map((m) =>
+        isPendingFor(m, clientMessageId) ? { ...m, status } : m,
+      ),
+    );
+  };
+
+  const deliverMessage = (msg: ChatMessage) => {
+    const clientMessageId = msg.clientMessageId as string;
+
+    if (!socketRef.current?.connected) {
+      setPendingStatus(clientMessageId, 'failed');
+      return;
+    }
+
+    socketRef.current.timeout(10000).emit(
+      'sendMessage',
+      {
+        conversationId: msg.conversationId,
+        text: msg.text,
+        clientMessageId,
+      },
+      (err: Error | null, saved: ChatMessage & { error?: string }) => {
+        if (err || !saved || saved.error || !saved._id) {
+          console.error('Failed to send message:', err ?? saved?.error);
+          setPendingStatus(clientMessageId, 'failed');
+          return;
+        }
+        settlePending(clientMessageId, saved);
+      },
+    );
+  };
+
   // Handle sending a message
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -269,52 +358,32 @@ export function ChatContainer() {
     }
     if (!newMessage.trim() || !activeConversation || !user) return;
 
-    const text = newMessage.trim();
-    setNewMessage('');
     const clientMessageId =
       typeof crypto !== 'undefined' && crypto.randomUUID
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    const pending: ChatMessage = {
+      _id: clientMessageId,
+      conversationId: activeConversation._id,
+      senderId: user.id,
+      text: newMessage.trim(),
+      createdAt: new Date().toISOString(),
+      clientMessageId,
+      status: 'sending',
+    };
 
-    if (socketRef.current?.connected) {
-      socketRef.current.timeout(10000).emit(
-        'sendMessage',
-        {
-          conversationId: activeConversation._id,
-          text,
-          clientMessageId,
-        },
-        (err: any, savedMsg: ChatMessage) => {
-          if (err) {
-            console.error('Socket message send timed out or failed:', err);
-            return;
-          }
-          if (savedMsg && savedMsg._id) {
-            setMessages((prev) => {
-              if (prev.some((m) => m._id === savedMsg._id)) return prev;
-              return [...prev, savedMsg];
-            });
-          }
-        },
-      );
-    } else {
-      try {
-        const res = await api.post(
-          `/chat/conversations/${activeConversation._id}/messages`,
-          { text, clientMessageId },
-        );
-        const savedMsg = res.data?.data || res.data;
+    setNewMessage('');
+    setMessages((prev) => [...prev, pending]);
+    deliverMessage(pending);
+  };
 
-        if (savedMsg && savedMsg._id) {
-          setMessages((prev) => {
-            if (prev.some((m) => m._id === savedMsg._id)) return prev;
-            return [...prev, savedMsg];
-          });
-        }
-      } catch (err) {
-        console.error('Failed to send message:', err);
-      }
-    }
+  const handleRetryMessage = (clientMessageId: string) => {
+    const failed = messages.find(
+      (m) => m.status === 'failed' && m.clientMessageId === clientMessageId,
+    );
+    if (!failed) return;
+    setPendingStatus(clientMessageId, 'sending');
+    deliverMessage(failed);
   };
 
   // Start new conversation with a selected user
@@ -373,12 +442,19 @@ export function ChatContainer() {
         currentUserName={user?.name}
         onlineUserIds={onlineUserIds}
         activeInstanceId={activeInstanceId}
+        conversationsError={conversationsError}
+        onRetryLoadConversations={loadConversations}
       />
 
       <ChatArea
         activeConversation={activeConversation}
         messages={messages}
         isLoadingMessages={isLoadingMessages}
+        messagesError={messagesError}
+        onRetryLoadMessages={() =>
+          activeConversation && loadMessages(activeConversation._id)
+        }
+        onRetryMessage={handleRetryMessage}
         newMessage={newMessage}
         setNewMessage={setNewMessage}
         onSendMessage={handleSendMessage}

@@ -13,6 +13,18 @@ export const api = axios.create({
   },
 });
 
+let refreshPromise: Promise<void> | null = null;
+
+export function refreshSession(): Promise<void> {
+  refreshPromise ??= api
+    .post('/auth/refresh')
+    .then(() => undefined)
+    .finally(() => {
+      refreshPromise = null;
+    });
+  return refreshPromise;
+}
+
 let isRefreshing = false;
 let failedQueue: Array<{
   resolve: (value?: unknown) => void;
@@ -64,7 +76,7 @@ api.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        await api.post('/auth/refresh');
+        await refreshSession();
         processQueue(null);
         return api(originalRequest);
       } catch (refreshError) {

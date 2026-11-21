@@ -43,8 +43,8 @@ _Expected Output:_
 ```json
 [
   { "name": "mongo_primary:27017", "stateStr": "PRIMARY" },
-  { "name": "mongo_replica:27017", "stateStr": "SECONDARY" },
-  { "name": "mongo_replica_2:27017", "stateStr": "SECONDARY" }
+  { "name": "mongo_replica:27018", "stateStr": "SECONDARY" },
+  { "name": "mongo_replica_2:27019", "stateStr": "SECONDARY" }
 ]
 ```
 
@@ -61,7 +61,7 @@ docker compose stop mongo_primary
 Query one of the surviving secondaries (`mongo_replica` on port 27018):
 
 ```bash
-docker compose exec mongo_replica mongosh -u admin -p password --authenticationDatabase admin --eval "rs.status().members.map(m => ({ name: m.name, stateStr: m.stateStr, health: m.health }))"
+docker compose exec mongo_replica mongosh --port 27018 -u admin -p password --authenticationDatabase admin --eval "rs.status().members.map(m => ({ name: m.name, stateStr: m.stateStr, health: m.health }))"
 ```
 
 _Result:_
