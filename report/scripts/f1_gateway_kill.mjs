@@ -65,7 +65,7 @@ const stored = (msgs.json?.data || []).filter((m) => m.clientMessageId?.startsWi
 const storedIds = new Map();
 for (const m of stored) storedIds.set(m.clientMessageId, (storedIds.get(m.clientMessageId) || 0) + 1);
 
-const aliceSockets = redis(`smembers presence:user_sockets:${alice.id}`).split(/\r?\n/).filter(Boolean);
+const aliceSockets = redis(`zrange presence:sockets:${alice.id} 0 -1`).split(/\r?\n/).filter(Boolean);
 const onlineAlice = redis('smembers presence:online_users').includes(alice.id);
 const orphan = a.socket.id ? aliceSockets.filter((s) => s !== a.socket.id) : aliceSockets;
 

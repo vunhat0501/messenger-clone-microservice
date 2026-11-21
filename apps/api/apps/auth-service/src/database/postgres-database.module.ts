@@ -1,5 +1,5 @@
 import { Logger, Module, OnModuleInit } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ConfigModule, ConfigType } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import postgresConfig from 'apps/auth-service/src/config/postgres.config';
 import { DataSource } from 'typeorm';
@@ -8,10 +8,10 @@ import { DataSource } from 'typeorm';
   imports: [
     ConfigModule.forFeature(postgresConfig),
     TypeOrmModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        ...configService.get('postgres'),
+      imports: [ConfigModule.forFeature(postgresConfig)],
+      inject: [postgresConfig.KEY],
+      useFactory: (config: ConfigType<typeof postgresConfig>) => ({
+        ...config,
         autoLoadEntities: true,
       }),
     }),
