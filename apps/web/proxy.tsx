@@ -88,7 +88,7 @@ export async function proxy(request: NextRequest) {
       if (referer && !referer.includes('/auth')) {
         return NextResponse.redirect(new URL(referer));
       }
-      return NextResponse.redirect(new URL('/fyp', request.url));
+      return NextResponse.redirect(new URL('/messages', request.url));
     }
     return NextResponse.next();
   }

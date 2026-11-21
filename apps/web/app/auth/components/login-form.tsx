@@ -49,7 +49,7 @@ export function LoginForm({
 
     try {
       await signIn(validation.data);
-      router.push('/fyp');
+      router.push('/messages');
     } catch (err: any) {
       setGlobalError(
         err.response?.data?.message || 'Invalid email or password',

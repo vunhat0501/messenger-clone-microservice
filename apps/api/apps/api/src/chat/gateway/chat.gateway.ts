@@ -10,14 +10,32 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { ClientProxy } from '@nestjs/microservices';
-import { firstValueFrom, timeout, catchError, throwError, TimeoutError } from 'rxjs';
+import {
+  firstValueFrom,
+  timeout,
+  catchError,
+  throwError,
+  TimeoutError,
+} from 'rxjs';
 import { JwtService } from '@nestjs/jwt';
 import { env } from 'apps/api/src/config/env.config';
 import { PresenceService } from './presence.service';
 
 @WebSocketGateway({
   cors: {
-    origin: '*',
+    origin: (origin, callback) => {
+      const allowedOrigins = [
+        env.FRONTEND_URL,
+        'http://localhost:3000',
+        'http://localhost:80',
+        'http://localhost:8080',
+      ];
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`Origin ${origin} not allowed by CORS`));
+      }
+    },
     credentials: true,
   },
 })
@@ -40,18 +58,21 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         client.handshake.headers?.authorization?.replace(/^Bearer\s+/i, '');
 
       if (!token && client.handshake.headers?.cookie) {
-        const cookies = client.handshake.headers.cookie
-          .split(';')
-          .reduce((acc, c) => {
+        const cookies = client.handshake.headers.cookie.split(';').reduce(
+          (acc, c) => {
             const [k, v] = c.trim().split('=');
             if (k && v) acc[k] = decodeURIComponent(v);
             return acc;
-          }, {} as Record<string, string>);
+          },
+          {} as Record<string, string>,
+        );
         token = cookies['access_token'];
       }
 
       if (!token) {
-        this.logger.warn(`Socket connection rejected: No token provided (${client.id})`);
+        this.logger.warn(
+          `Socket connection rejected: No token provided (${client.id})`,
+        );
         client.emit('auth_error', { message: 'Authentication token required' });
         client.disconnect(true);
         return;
@@ -159,8 +180,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     },
     @ConnectedSocket() client: Socket,
   ) {
-    const senderId =
-      client.data?.user?.sub ?? (client as any).user?.userId;
+    const senderId = client.data?.user?.sub ?? (client as any).user?.userId;
 
     if (!senderId) {
       return { error: 'Unauthorized sender' };
