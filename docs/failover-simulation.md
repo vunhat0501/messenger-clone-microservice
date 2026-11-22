@@ -1,6 +1,6 @@
 # Database Failover & Replica Promotion Simulation Guide
 
-This guide provides test scenarios, commands, and scripts to simulate primary database failure, observe automated election/promotion, and verify that the application remains functional.
+This guide provides test scenarios, verification commands, and automated scripts to simulate primary database failure, observe automated election/promotion, and verify that the application dynamically adapts and keeps processing read/write operations without downtime or read-only transaction errors.
 
 ---
 
@@ -18,11 +18,18 @@ flowchart TD
     end
 
     subgraph MongoDB_Cluster ["MongoDB Replica Set (rs0)"]
-        P_MG["mongo_primary:27017 (PRIMARY)"]
-        R1_MG["mongo_replica:27018 (SECONDARY)"]
-        R2_MG["mongo_replica_2:27019 (SECONDARY)"]
-        P_MG <-->|Raft Consensus| R1_MG
-        R1_MG <-->|Raft Consensus| R2_MG
+        P_MG["mongo_primary:27017 (PRIMARY, priority: 2)"]
+        R1_MG["mongo_replica:27018 (SECONDARY, priority: 1)"]
+        R2_MG["mongo_replica_2:27019 (SECONDARY, priority: 1)"]
+        P_MG <-->|Heartbeats & Raft Consensus| R1_MG
+        R1_MG <-->|Heartbeats & Raft Consensus| R2_MG
+    end
+
+    subgraph NestJS_App ["Backend Services (Dynamic Resolvers)"]
+        AUTH["auth-service (resolvePostgresTopology)"]
+        CHAT["chat-service (resolveMongoTopology)"]
+        AUTH -->|"Detects Read-Write Primary (pg_is_in_recovery = false)"| PostgreSQL_Cluster
+        CHAT -->|"Detects Writable Primary (isWritablePrimary = true)"| MongoDB_Cluster
     end
 ```
 
@@ -30,12 +37,12 @@ flowchart TD
 
 ## SCENARIO 1: MongoDB Primary Failure & Automatic Promotion
 
-MongoDB handles election and failover **100% natively** via Raft-like consensus. When the primary goes down, the remaining secondaries form a quorum ($2/3$) and automatically elect a new primary. Drivers dynamically discover the new primary without restarting your app.
+MongoDB handles election and failover natively via Raft-like consensus. When the primary goes down, the surviving secondaries form a quorum ($2/3$) and elect a new primary. NestJS `chat-service` dynamically identifies the new primary via `resolveMongoTopology`.
 
 ### Step 1: Check Current State Before Crash
 
 ```bash
-docker compose exec mongo_primary mongosh -u admin -p password --authenticationDatabase admin --eval "rs.status().members.map(m => ({ name: m.name, stateStr: m.stateStr }))"
+docker compose exec mongo_primary mongosh -u admin -p password --eval "rs.status().members.map(m => ({ name: m.name, stateStr: m.stateStr }))"
 ```
 
 _Expected Output:_
@@ -61,28 +68,38 @@ docker compose stop mongo_primary
 Query one of the surviving secondaries (`mongo_replica` on port 27018):
 
 ```bash
-docker compose exec mongo_replica mongosh --port 27018 -u admin -p password --authenticationDatabase admin --eval "rs.status().members.map(m => ({ name: m.name, stateStr: m.stateStr, health: m.health }))"
+docker compose exec mongo_replica mongosh --port 27018 -u admin -p password --eval "rs.status().members.map(m => ({ name: m.name, stateStr: m.stateStr, health: m.health }))"
 ```
 
 _Result:_
 
 - `mongo_primary:27017` is marked `health: 0` (unreachable).
-- One of the surviving nodes (`mongo_replica` or `mongo_replica_2`) is automatically promoted to **`PRIMARY`**!
-- Mongoose in `chat-service` reconnects to the new primary automatically.
+- One of the surviving nodes (`mongo_replica:27018` or `mongo_replica_2:27019`) is automatically promoted to **`PRIMARY`**!
 
-### Step 4: Recover Primary (Rejoins as Secondary)
+### Step 4: Verify Application Dynamic Routing
+
+Test that the backend dynamic topology resolver automatically routes writes to the promoted node:
+
+```bash
+pnpm --filter api exec node -r ts-node/register -r tsconfig-paths/register -e "const { resolveMongoTopology } = require('./apps/chat-service/src/database/mongo-topology.resolver'); resolveMongoTopology(['mongodb://admin:password@localhost:27017/chat_db?authSource=admin&directConnection=true', 'mongodb://admin:password@localhost:27018/chat_db?authSource=admin&directConnection=true', 'mongodb://admin:password@localhost:27019/chat_db?authSource=admin&directConnection=true']).then(console.log);"
+```
+
+_Expected Output:_
+`primaryUri` automatically switches to `localhost:27018`!
+
+### Step 5: Recover Primary (Rejoins as Secondary/Primary)
 
 ```bash
 docker compose start mongo_primary
 ```
 
-The old primary restarts, catches up from the oplog, and rejoins the cluster as `SECONDARY`.
+The old primary restarts, catches up from the oplog, and re-stabilizes in the cluster without crashing or corrupting data.
 
 ---
 
 ## SCENARIO 2: PostgreSQL Primary Failure & Automated Promotion
 
-PostgreSQL streaming replication is monitored by the **`postgres_sentinel`** container daemon.
+PostgreSQL streaming replication is continuously monitored by the **`postgres_sentinel`** container daemon.
 
 ### Step 1: Verify Initial Replication State
 
@@ -109,7 +126,7 @@ docker compose logs -f postgres_sentinel
 
 ### Step 3: Simulate Primary Node Crash
 
-Kill `postgres_primary`:
+Stop `postgres_primary`:
 
 ```bash
 docker compose stop postgres_primary
@@ -117,13 +134,13 @@ docker compose stop postgres_primary
 
 ### Step 4: Observe Automatic Standby Promotion
 
-Watch the `postgres_sentinel` terminal. Within 15 seconds (3 failed health probes at 5s intervals), sentinel will trigger promotion:
+Watch the `postgres_sentinel` terminal. Within ~15–20 seconds (3 failed health probes at 5s intervals), sentinel triggers promotion:
 
 ```log
 Warning: Primary postgres_primary health check failed (Count: 1 / 3).
 Warning: Primary postgres_primary health check failed (Count: 2 / 3).
 Warning: Primary postgres_primary health check failed (Count: 3 / 3).
-[2026-11-21T...] Primary postgres_primary is down! Initiating automatic failover...
+Primary postgres_primary is down! Initiating automatic failover...
 ============================================================
 ATTEMPTING AUTOMATIC PROMOTION OF: postgres_replica
 ============================================================
@@ -147,16 +164,39 @@ Insert a test record directly into the promoted node:
 docker compose exec postgres_replica psql -U postgres -d postgres -c "CREATE TABLE IF NOT EXISTS failover_test (id serial, created_at timestamp default now()); INSERT INTO failover_test DEFAULT VALUES; SELECT * FROM failover_test;"
 ```
 
-Now turn the primary node online
+### Step 6: Verify Backend Dynamic Routing (`auth-service`)
+
+Verify that TypeORM detects the newly promoted node on port 5433 as `master`:
+
+```bash
+pnpm --filter api exec node -r ts-node/register -r tsconfig-paths/register -e "const { resolvePostgresTopology } = require('./apps/auth-service/src/database/pg-topology.resolver'); resolvePostgresTopology(['postgresql://postgres:postgres@localhost:5432/postgres?schema=public', 'postgresql://postgres:postgres@localhost:5433/postgres?schema=public', 'postgresql://postgres:postgres@localhost:5434/postgres?schema=public']).then(console.log);"
+```
+
+_Expected Output:_
+`masterUrl` points to port `5433`, and ports `5432` / `5434` are assigned as `slaveUrls`.
+
+### Step 7: Recover Primary Node (Split-Brain Prevention)
+
+Start `postgres_primary` back up:
 
 ```bash
 docker compose start postgres_primary
 ```
 
-Check recovery status of primary node
+Check recovery status of `postgres_primary`:
 
 ```bash
 docker compose exec postgres_primary psql -U postgres -d postgres -tAc "SELECT pg_is_in_recovery();"
 ```
 
-_Expected output:_ **`t`** (`true` — node is now an active read-only).
+_Expected output:_ **`t`** (`true` — split-brain prevention automatically demotes it to a read-only standby following the new primary).
+
+---
+
+## Automated Script for Fast Demo
+
+You can run the end-to-end automated PowerShell script to demonstrate the entire failover cycle in one command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\simulate-failover.ps1
+```

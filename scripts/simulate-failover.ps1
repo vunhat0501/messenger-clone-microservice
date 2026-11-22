@@ -18,8 +18,8 @@ Write-Host " 2. SIMULATING PRIMARY NODE CRASH: Stopping postgres_primary..." -Fo
 Write-Host "==========================================================" -ForegroundColor Yellow
 docker compose stop postgres_primary
 
-Write-Host "`nWaiting 18 seconds for postgres_sentinel to detect failure (3 probes @ 5s) and promote standby..." -ForegroundColor Yellow
-Start-Sleep -Seconds 18
+Write-Host "`nWaiting 25 seconds for postgres_sentinel to detect failure (3 probes @ 5s + promotion buffer) and promote standby..." -ForegroundColor Yellow
+Start-Sleep -Seconds 25
 
 Write-Host "`n==========================================================" -ForegroundColor Cyan
 Write-Host " 3. CHECKING SENTINEL PROMOTION LOGS" -ForegroundColor Cyan
