@@ -111,6 +111,9 @@ theo dõi nhầm thư mục `dist` nên gateway 8009 không tự khởi động 
 - **Cụm Postgres tự failover nhiều lần:** sentinel viết lại (`scripts/postgres-sentinel.sh`) và script khởi động chung
   `scripts/postgres-node.sh` thay hai script cũ `postgres-primary.sh` và `postgres-standby.sh`; mỗi node có replication slot riêng
   (chi tiết ở mục 5, kết quả đo ở 4.9). Volume cũ vẫn dùng được, không cần dựng lại.
+- **Gộp thêm bản sửa failover của nhóm (commit `459d194`):** giữ sentinel và script khởi động mới ở trên vì bản đó chưa bám standby và
+  chọn sai node khi failover lần hai (xem 4.11); nhận phần tài liệu `docs/failover-simulation.md` và `scripts/simulate-failover.ps1`,
+  viết lại cho khớp hành vi hiện tại (tìm primary động, nhiều vòng, chế độ ngắt mạng, kiểm tra không mất dữ liệu).
 - **Auth-service và chat-service không còn chết khi mất RabbitMQ:** `common/rmq-rejection-guard.ts` (xem mục 5, điểm 1).
 - CORS của gateway do `main` thu hẹp (`localhost:3000/80/8080`) được giữ nguyên.
 
@@ -256,6 +259,36 @@ Hai lỗi phía ứng dụng chỉ lộ ra khi đo thật, đã sửa:
    `destroy()` của watcher phải chờ, và mọi yêu cầu trong lúc đó lỗi `Cannot use a pool after calling end on the pool`. Nay pool
    có `query_timeout` 10 s, `connectionTimeoutMillis` 3 s và `keepAlive` (`postgres.config.ts`): từ hơn 60 s xuống 24 s.
 
+Script demo `scripts/simulate-failover.ps1` (không giả định node nào là primary, kiểm tra không mất dòng đánh dấu nào, node cũ về
+làm standby và cả ba node cùng dữ liệu) chạy đạt cả hai chế độ sau khi gộp:
+
+| Chế độ               | Có primary mới sau | Mất dữ liệu | Hai primary cùng lúc      | Node cũ về làm standby sau |
+| -------------------- | ------------------ | ----------- | ------------------------- | -------------------------- |
+| `Stop` (1 vòng)      | 23,7 s             | không       | không                     | 1,9 s                      |
+| `Partition` (1 vòng) | 23,9 s             | không       | có, sentinel chặn node cũ | 5 s                        |
+
+### 4.10 Sentinel mất đường tới primary (bước "ý kiến thứ hai")
+
+Chỉ chặn đường từ sentinel tới primary hiện tại (một tuyến `blackhole` trong container sentinel, qua container phụ `netem-tools`),
+primary vẫn sống và vẫn nối với các standby. Trong 36 s (hơn 7 vòng kiểm tra) sentinel ghi `No reachable primary` rồi
+`Not failing over: standby ... is still streaming from a primary`, **không promote**, và vẫn chỉ có một primary. Gỡ chặn thì sentinel báo
+`Primary reachable again`. Không có số đo thời gian: đây là kiểm tra đúng/sai.
+
+### 4.11 So sánh với bản sentinel trước đó (commit `459d194`)
+
+Bản đó chỉ tạo lại hai slot trên primary mới sau khi promote và cho node cũ tự nhân bản lại khi khởi động; sentinel vẫn ping host cố
+định `postgres_primary` và promote theo thứ tự cố định. Chạy thử trên một cụm riêng (project Compose khác, cổng 6432–6434, đã dọn sau đó):
+
+| Bước                                        | Kết quả                                                                                                                                   |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Tắt primary                                 | Promote `postgres_replica` sau khoảng 24 s                                                                                                |
+| Standby còn lại sau failover                | `postgres_replica_2` không nhận dữ liệu: vẫn trỏ `host=postgres_primary`, slot của nó trên primary mới ở trạng thái không hoạt động       |
+| Bật lại node cũ                             | Tự hạ xuống làm standby của primary mới (đúng). `postgres_replica_2` nối vào nó và lỗi `replication slot "auth_replica_2" does not exist` |
+| Ghi 1000 dòng rồi tắt primary mới (lần hai) | Sentinel promote `postgres_replica_2` (node tụt hậu), không phải node còn đủ dữ liệu: **1000 dòng biến mất khỏi primary mới**             |
+
+Bản hiện tại chọn standby có WAL nhận được nhiều nhất và đổi `primary_conninfo` của mọi standby, nên không gặp hai lỗi này.
+Chưa thử bản cũ với kịch bản ngắt mạng (cụm đã hỏng sau lần failover thứ hai).
+
 ---
 
 ## 5. Phát hiện chưa sửa và giới hạn
@@ -275,6 +308,7 @@ Hai lỗi phía ứng dụng chỉ lộ ra khi đo thật, đã sửa:
    - **Chọn node promote:** standby có vị trí WAL nhận được lớn nhất (mất ít dữ liệu nhất).
    - **Ý kiến thứ hai trước khi promote:** nếu còn standby đang `streaming` thì primary vẫn sống và chỉ sentinel mất mạng tới nó,
      nên sentinel không promote (tránh tự sinh hai primary). Standby nhận ra mất primary trong vòng 15 s (`wal_receiver_timeout`).
+     Đã thử thật ở mục 4.10.
    - **Chặn primary cũ (fencing):** khi thấy hai primary, sentinel giữ node nó đang theo (hoặc node có timeline cao hơn) và tắt
      node kia bằng `COPY ... TO PROGRAM 'kill -INT 1'` (dừng nhanh tiến trình chính của container); Docker bật lại container.
    - **Tự quay về làm standby:** script khởi động chung `scripts/postgres-node.sh` (thay `postgres-primary.sh` và
@@ -288,7 +322,8 @@ Hai lỗi phía ứng dụng chỉ lộ ra khi đo thật, đã sửa:
 4. **Cookie gắn theo host:** hai người dùng cùng trên một máy phải dùng hai trình duyệt (hoặc cửa sổ riêng tư) cùng `localhost`.
 5. **Hạ tầng cùng một máy**, ứng dụng chưa đóng gói Docker (không có Dockerfile), không có mạng thật giữa các nút.
 6. 7 tệp spec dựng sẵn của auth-service và chat-service vẫn lỗi (lệch dependency injection), có từ trước, chưa sửa.
-7. Chưa đo: failover Postgres trong lúc tải lớn; trường hợp chỉ sentinel mất mạng (bước "ý kiến thứ hai" chưa được thử thật).
+7. Chưa đo: failover Postgres trong lúc có tải lớn (các phép đo ở 4.9 chạy với một luồng đăng nhập thăm dò); chưa thử sentinel tự chết
+   (khi đó không có ai promote; cần chạy nhiều sentinel và bầu chọn giữa chúng).
 
 ---
 
@@ -336,6 +371,7 @@ nên chạy từng cái một và kiểm tra hệ thống đã về bình thư�
 | Mở rộng 1 so với 2 gateway, chat-service | `bash report/scripts/run_p2_scale.sh`                                                           |
 | Chạy dài 30 phút kèm CPU/RAM             | `bash report/scripts/run_p7_soak.sh`                                                            |
 | Failover Postgres nhiều lần, ngắt mạng   | `node report/scripts/f8_postgres_multi_failover.mjs 3 stop` (hoặc `1 partition`)                |
+| Demo failover Postgres, tự kiểm tra      | `powershell -File scripts\simulate-failover.ps1 -Rounds 3` (hoặc `-Mode Partition`)             |
 
 Các bài tải tạo nhiều tin có tiền tố `load-` trong MongoDB; xoá chúng sau khi đo (chỉ theo tiền tố đó).
 Lưu ý: nếu RabbitMQ đếm được nhiều hơn 1 bản nhận việc cho `auth_queue` hoặc `chat_queue` thì còn tiến trình dư từ lần
@@ -352,5 +388,6 @@ chạy trước; dừng hết rồi chạy lại backend, nếu không kết qu�
 | [images/](images/)                                                                         | Ảnh chụp giao diện trước và sau khi sửa                                                    |
 | [scripts/](scripts/)                                                                       | Script đo: tải (`p1_*`, `run_p*`), lỗi (`f1`–`f8`), tài nguyên (`sample_resources.mjs`)    |
 | [../scripts/](../scripts/)                                                                 | `postgres-sentinel.sh` (failover, chặn primary cũ), `postgres-node.sh` (khởi động node)    |
+| [../scripts/simulate-failover.ps1](../scripts/simulate-failover.ps1)                       | Demo failover Postgres tự kiểm tra (xem `../docs/failover-simulation.md`)                  |
 | [../docs/](../docs/)                                                                       | Tài liệu replication và mô phỏng failover của nhóm                                         |
 | [../distributed_system_report.md](../distributed_system_report.md), [../erd.md](../erd.md) | Báo cáo kiến trúc và thiết kế CSDL của nhóm                                                |

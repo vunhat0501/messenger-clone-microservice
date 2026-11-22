@@ -68,6 +68,7 @@ Use Node.js 20 or later and pnpm 10.4.1, as declared in the root `package.json`.
 - Frontend environment validation lives in `apps/web/config/env.config.ts`. `NEXT_PUBLIC_BACKEND_URL` defaults to the Nginx load balancer, `http://localhost:80`, so the BFF keeps working when a single gateway is down; point it at `http://localhost:8008` to bypass Nginx.
 - Keep secrets out of source, logs, test fixtures, and responses. Only expose browser-safe values through `NEXT_PUBLIC_*` variables.
 - Use the Compose service names `postgres`, `mongo`, `rabbitmq`, `redis`, and `nginx` when managing local infrastructure. Check whether a service is already running before starting another instance.
+- After a PostgreSQL failover any of `postgres_primary`, `postgres_replica` and `postgres_replica_2` can be the primary, and the roles do not switch back by themselves. Do not assume `postgres_primary` is the writer: check `pg_is_in_recovery()` (or run `scripts/simulate-failover.ps1`) first. All three start through `scripts/postgres-node.sh`, and `postgres_sentinel` handles promotion and fencing; stop the sentinel before promoting or demoting a node by hand.
 - Do not drop schemas, remove persistent volumes, or reset databases as a routine troubleshooting step. Confirm the intended database and data impact before destructive operations.
 
 ## Backend conventions

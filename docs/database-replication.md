@@ -98,10 +98,17 @@ initialization. Existing MongoDB volumes must already contain an administrative
 user matching `MONGO_USER`/`MONGO_PASS`; image environment variables do not reset
 credentials on existing data.
 
-The PostgreSQL replica reuses its standby data on restart. The physical slot
-`auth_replica` retains WAL while it is offline; monitor primary disk usage and
-manage WAL retention for a long-running deployment. Rebuilding a standby or
-rotating replication credentials requires a planned maintenance operation.
+A PostgreSQL standby reuses its data on restart. Every node has its own physical
+slot (`auth_primary`, `auth_replica`, `auth_replica_2`), which retains WAL on the
+current primary while that node is offline. `max_slot_wal_keep_size` (default
+`1GB`, `PG_MAX_SLOT_WAL_KEEP_SIZE`) bounds that retention, so a node that stays
+offline longer is re-cloned instead of filling the primary's disk. Rotating
+replication credentials requires a planned maintenance operation.
+
+All three PostgreSQL services start through `scripts/postgres-node.sh`. A node
+does not assume its role from its service name: after a failover any of them can
+be the primary, so use the verification commands below (or
+`scripts/simulate-failover.ps1`) to see the current roles.
 
 ## Routing and consistency
 
@@ -133,40 +140,68 @@ retain executable modes when copying them to Linux.
 ## Failover and Promotion
 
 ### PostgreSQL Automatic Failover & Promotion
-A dedicated health monitoring daemon container (`postgres_sentinel`) monitors the primary database every 5 seconds.
-- **Automatic Detection**: When `postgres_primary` fails 3 consecutive health checks (15 seconds), Sentinel logs a failure alert.
-- **Automatic Standby Promotion**: Sentinel invokes `SELECT pg_promote();` on `postgres_replica` (or falls back to `postgres_replica_2` if the first replica is unavailable), immediately elevating it to read-write `PRIMARY`.
-- **Driver Auto-Routing**: With `targetServerType=primary` configured in `DATABASE_URL` (e.g., `postgresql://user:pass@localhost:5432,localhost:5433,localhost:5434/postgres?targetServerType=primary`), TypeORM and `node-postgres` automatically probe each host in order and reconnect writes directly to whichever node is currently not in recovery (`pg_is_in_recovery() = false`), requiring zero manual intervention or application server restarts.
+
+One daemon container (`postgres_sentinel`, `scripts/postgres-sentinel.sh`) watches all
+three nodes every 5 seconds. It never assumes which node is the primary: each round
+it asks every node `pg_is_in_recovery()`, so it can fail over repeatedly.
+
+| Situation | What the sentinel does |
+| --- | --- |
+| Exactly one primary | Makes sure every standby follows it: creates the standby's slot on the primary and, if needed, repoints `primary_conninfo` and `primary_slot_name` with `ALTER SYSTEM` and `pg_reload_conf()` (no restart). |
+| No reachable primary for 3 rounds (about 15 s) | Looks at the reachable standbys. If one is still `streaming`, the primary is alive and only the sentinel lost sight of it, so it does **not** promote. Otherwise it promotes the standby with the most received WAL (`pg_promote()`) and repoints the others. |
+| Two primaries (an old primary came back writable) | Keeps the one it already follows, or the higher timeline if it never followed one, and shuts the other down with `COPY ... TO PROGRAM 'kill -INT 1'`. Docker restarts that container. |
+
+When a container starts, `scripts/postgres-node.sh` looks for a primary among its peers.
+A node whose data directory belongs to an old primary (the peer is on a newer or equal
+timeline) discards it and re-clones itself as a standby with `pg_basebackup`. An empty
+data directory is cloned the same way; only `postgres_primary` may initialise a brand-new cluster.
+
+`auth-service` follows the promotion by itself: `PostgresTopologyWatcher` re-checks the
+three configured URLs every 5 seconds and reconnects when the primary changes. When two
+nodes claim to be primary it picks the one on the highest timeline and ignores the other
+for reads and writes (`pg-topology.resolver.ts`).
+
+Measured on a single machine (`report/README.md`, section 4.9): writes recover about 23 to 26
+seconds after the primary stops or is cut off, the old primary rejoins as a standby in 2 to 6
+seconds, and no run ended with two writable primaries.
+
+**Limits.** The sentinel is a single process (no majority vote between several sentinels).
+Replication is asynchronous, so commits not yet streamed when the primary fails are lost.
+Fencing needs the sentinel's database user to be a superuser and kills the container's main
+process, which suits a development stack, not production. A stale primary is re-cloned in full
+instead of being rewound with `pg_rewind`, and writes it accepted while cut off are discarded.
 
 ### PostgreSQL Manual Failover (Optional)
-You can still manually promote a replica on demand via SQL if desired:
+
+You can still promote a standby by hand, but stop the sentinel first or it may react:
 
 ```sh
-# Promote postgres_replica (port 5433)
+docker compose stop postgres_sentinel
 docker compose exec postgres_replica psql -U postgres -d postgres -c "SELECT pg_promote();"
-
-# Or promote postgres_replica_2 (port 5434)
-docker compose exec postgres_replica_2 psql -U postgres -d postgres -c "SELECT pg_promote();"
 ```
+
+Start the sentinel again afterwards; it repoints the remaining standbys and shuts down the
+old primary if it is still writable.
 
 ### MongoDB Automatic Failover
 With a **3-node replica set** (`mongo_primary`, `mongo_replica`, `mongo_replica_2`), MongoDB performs **automatic election and promotion** via Raft-like consensus:
 - If `mongo_primary` goes down, the 2 remaining secondaries form a majority quorum (2 out of 3 votes) and automatically elect a new `PRIMARY`.
-- MongoDB drivers and Mongoose automatically discover the new primary node and reroute write operations without downtime or manual reconfiguration.
+- MongoDB drivers and Mongoose discover the new primary node and reroute writes without manual reconfiguration. Writes fail briefly during the election (about 10 to 12 seconds when measured).
 - When `mongo_primary` recovers, it rejoins the replica set as a `SECONDARY` and catches up via oplog.
 
 To manually trigger or test election in MongoDB:
 ```sh
-docker compose exec mongo_primary mongosh -u admin -p password --authenticationDatabase admin --eval "rs.stepDown(60)"
+docker compose exec mongo_primary sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval "rs.stepDown(60)"'
 ```
 
 ## Availability limits
 
-This requested topology provides replication and read distribution, but does
-not guarantee availability after a node failure. PostgreSQL streaming is
-asynchronous and requires manual promotion plus connection reconfiguration;
-unreplicated commits can be lost during promotion. TypeORM does not automatically
-promote a standby or fall back from an unavailable configured PostgreSQL reader.
+This topology provides replication, read distribution and automatic PostgreSQL
+failover, but not uninterrupted availability: writes stop for roughly 25 seconds
+while the sentinel confirms the failure and promotes a standby. PostgreSQL streaming
+is asynchronous, so unreplicated commits can be lost during promotion, and the single
+sentinel is itself a point of failure. TypeORM does not fall back from an unavailable
+configured reader; `PostgresTopologyWatcher` rebuilds the connections when the primary changes.
 
 A two-voter MongoDB set needs both votes to elect/retain a primary and acknowledge
 majority writes. Losing either member stops writes. A third voting data-bearing

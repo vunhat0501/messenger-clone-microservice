@@ -1,6 +1,8 @@
 # Database Failover & Replica Promotion Simulation Guide
 
-This guide provides test scenarios, verification commands, and automated scripts to simulate primary database failure, observe automated election/promotion, and verify that the application dynamically adapts and keeps processing read/write operations without downtime or read-only transaction errors.
+This guide gives test scenarios, verification commands and an automated script to simulate a primary database failure, watch the automatic promotion, and check that no committed data is lost and the old primary rejoins safely. Everything here stops or isolates real containers: use a development stack only.
+
+The commands use `docker compose exec` with the default `postgres` user and database. If your `.env` sets other `DB_USER` or `DB_NAME` values, use those instead.
 
 ---
 
@@ -8,195 +10,246 @@ This guide provides test scenarios, verification commands, and automated scripts
 
 ```mermaid
 flowchart TD
-    subgraph PostgreSQL_Cluster ["PostgreSQL 3-Node Topology"]
-        P_PG["postgres_primary:5432 (Primary)"]
-        R1_PG["postgres_replica:5433 (Standby)"]
-        R2_PG["postgres_replica_2:5434 (Standby)"]
-        Sentinel["postgres_sentinel (Daemon)"]
-        Sentinel -. "Heartbeat (5s)" .-> P_PG
-        Sentinel == "Failover: pg_promote()" ==> R1_PG
+    subgraph PostgreSQL_Cluster ["PostgreSQL 3-node topology (roles change after a failover)"]
+        N1["postgres_primary:5432"]
+        N2["postgres_replica:5433"]
+        N3["postgres_replica_2:5434"]
+        Sentinel["postgres_sentinel (single daemon)"]
+        Sentinel -. "asks every node each 5 s" .-> N1
+        Sentinel -. "asks every node each 5 s" .-> N2
+        Sentinel -. "asks every node each 5 s" .-> N3
     end
 
-    subgraph MongoDB_Cluster ["MongoDB Replica Set (rs0)"]
+    subgraph MongoDB_Cluster ["MongoDB replica set (rs0)"]
         P_MG["mongo_primary:27017 (PRIMARY, priority: 2)"]
         R1_MG["mongo_replica:27018 (SECONDARY, priority: 1)"]
         R2_MG["mongo_replica_2:27019 (SECONDARY, priority: 1)"]
-        P_MG <-->|Heartbeats & Raft Consensus| R1_MG
-        R1_MG <-->|Heartbeats & Raft Consensus| R2_MG
+        P_MG <-->|Heartbeats & elections| R1_MG
+        R1_MG <-->|Heartbeats & elections| R2_MG
     end
 
-    subgraph NestJS_App ["Backend Services (Dynamic Resolvers)"]
-        AUTH["auth-service (resolvePostgresTopology)"]
-        CHAT["chat-service (resolveMongoTopology)"]
-        AUTH -->|"Detects Read-Write Primary (pg_is_in_recovery = false)"| PostgreSQL_Cluster
-        CHAT -->|"Detects Writable Primary (isWritablePrimary = true)"| MongoDB_Cluster
+    subgraph NestJS_App ["Backend services"]
+        AUTH["auth-service (PostgresTopologyWatcher)"]
+        CHAT["chat-service (Mongoose driver + MONGO_HOST_MAP)"]
     end
+
+    AUTH -->|"re-checks every 5 s, reconnects to the primary"| PostgreSQL_Cluster
+    CHAT -->|"driver follows the replica set primary"| MongoDB_Cluster
 ```
+
+How the PostgreSQL side behaves is described in [database-replication.md](database-replication.md#postgresql-automatic-failover--promotion).
 
 ---
 
-## SCENARIO 1: MongoDB Primary Failure & Automatic Promotion
+## SCENARIO 1: MongoDB Primary Failure & Automatic Election
 
-MongoDB handles election and failover natively via Raft-like consensus. When the primary goes down, the surviving secondaries form a quorum ($2/3$) and elect a new primary. NestJS `chat-service` dynamically identifies the new primary via `resolveMongoTopology`.
+MongoDB handles election natively: when the primary goes down, the two surviving members hold a majority (2 of 3) and elect a new primary. The `chat-service` driver follows the new primary; writes fail for a short time during the election (about 10 to 12 seconds when measured).
 
-### Step 1: Check Current State Before Crash
+### Step 1: Check the state before the crash
 
 ```bash
-docker compose exec mongo_primary mongosh -u admin -p password --eval "rs.status().members.map(m => ({ name: m.name, stateStr: m.stateStr }))"
+docker compose exec mongo_primary sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval "rs.status().members.map(m => m.name + \" \" + m.stateStr).join(\", \")"'
 ```
 
-_Expected Output:_
+_Expected output:_ `mongo_primary:27017 PRIMARY, mongo_replica:27018 SECONDARY, mongo_replica_2:27019 SECONDARY`
 
-```json
-[
-  { "name": "mongo_primary:27017", "stateStr": "PRIMARY" },
-  { "name": "mongo_replica:27018", "stateStr": "SECONDARY" },
-  { "name": "mongo_replica_2:27019", "stateStr": "SECONDARY" }
-]
-```
-
-### Step 2: Simulate Primary Node Crash
-
-Stop the `mongo_primary` container:
+### Step 2: Stop the primary
 
 ```bash
 docker compose stop mongo_primary
 ```
 
-### Step 3: Observe Automatic Election & Promotion
+### Step 3: Observe the election
 
-Query one of the surviving secondaries (`mongo_replica` on port 27018):
-
-```bash
-docker compose exec mongo_replica mongosh --port 27018 -u admin -p password --eval "rs.status().members.map(m => ({ name: m.name, stateStr: m.stateStr, health: m.health }))"
-```
-
-_Result:_
-
-- `mongo_primary:27017` is marked `health: 0` (unreachable).
-- One of the surviving nodes (`mongo_replica:27018` or `mongo_replica_2:27019`) is automatically promoted to **`PRIMARY`**!
-
-### Step 4: Verify Application Dynamic Routing
-
-Test that the backend dynamic topology resolver automatically routes writes to the promoted node:
+Query a surviving member (`mongo_replica`). Its container has no credentials in its environment (only `mongo_primary` has them) and `mongo_primary` is stopped, so use `MONGO_USER` and `MONGO_PASS` from your `.env`:
 
 ```bash
-pnpm --filter api exec node -r ts-node/register -r tsconfig-paths/register -e "const { resolveMongoTopology } = require('./apps/chat-service/src/database/mongo-topology.resolver'); resolveMongoTopology(['mongodb://admin:password@localhost:27017/chat_db?authSource=admin&directConnection=true', 'mongodb://admin:password@localhost:27018/chat_db?authSource=admin&directConnection=true', 'mongodb://admin:password@localhost:27019/chat_db?authSource=admin&directConnection=true']).then(console.log);"
+docker compose exec mongo_replica mongosh --quiet --port 27018 -u <MONGO_USER> -p <MONGO_PASS> --authenticationDatabase admin --eval "rs.status().members.map(m => m.name + ' ' + m.stateStr + ' health=' + m.health).join(', ')"
 ```
 
-_Expected Output:_
-`primaryUri` automatically switches to `localhost:27018`!
+_Result:_ `mongo_primary:27017` has `health=0`, and one of `mongo_replica:27018` or `mongo_replica_2:27019` is now `PRIMARY`.
 
-### Step 5: Recover Primary (Rejoins as Secondary/Primary)
+### Step 4: Check that the application keeps working
+
+Send a message from the web app. It may report "Not sent" for the first 10 to 12 seconds, then succeed (use the Retry button). For a timed run, use the measurement script: `node report/scripts/f4_f6_infra.mjs mongo 40000`.
+
+### Step 5: Recover the old primary
 
 ```bash
 docker compose start mongo_primary
 ```
 
-The old primary restarts, catches up from the oplog, and re-stabilizes in the cluster without crashing or corrupting data.
+The old primary catches up from the oplog and rejoins as a `SECONDARY` (or takes the primary role back, because of its higher priority).
 
 ---
 
-## SCENARIO 2: PostgreSQL Primary Failure & Automated Promotion
+## SCENARIO 2: PostgreSQL Primary Crash
 
-PostgreSQL streaming replication is continuously monitored by the **`postgres_sentinel`** container daemon.
+The **`postgres_sentinel`** daemon watches all three nodes. Because any node can be the primary after a failover, first find out which one it is.
 
-### Step 1: Verify Initial Replication State
-
-Check `pg_is_in_recovery()` across all 3 nodes:
+### Step 1: Find the current roles
 
 ```bash
-# Primary should return 'f' (false = read-write)
-docker compose exec postgres_primary psql -U postgres -d postgres -tAc "SELECT pg_is_in_recovery();"
-
-# Standby 1 should return 't' (true = read-only replica)
-docker compose exec postgres_replica psql -U postgres -d postgres -tAc "SELECT pg_is_in_recovery();"
-
-# Standby 2 should return 't' (true = read-only replica)
-docker compose exec postgres_replica_2 psql -U postgres -d postgres -tAc "SELECT pg_is_in_recovery();"
+docker compose exec -T postgres_primary psql -U postgres -d postgres -tAc "SELECT pg_is_in_recovery();"
+docker compose exec -T postgres_replica psql -U postgres -d postgres -tAc "SELECT pg_is_in_recovery();"
+docker compose exec -T postgres_replica_2 psql -U postgres -d postgres -tAc "SELECT pg_is_in_recovery();"
 ```
 
-### Step 2: Open Sentinel Monitor Logs in Real Time
+`f` is the read-write primary and `t` is a read-only standby. The commands below assume `postgres_primary` is the primary; if another node is, swap the names. Check that the primary has two streaming standbys:
 
-In a separate terminal window, follow the sentinel daemon logs:
+```bash
+docker compose exec -T postgres_primary psql -U postgres -d postgres -tAc "SELECT application_name, state FROM pg_stat_replication;"
+```
+
+### Step 2: Write a marker row
+
+```bash
+docker compose exec -T postgres_primary psql -U postgres -d postgres -c "CREATE TABLE IF NOT EXISTS failover_probe (id serial PRIMARY KEY, at timestamptz DEFAULT now()); INSERT INTO failover_probe DEFAULT VALUES; SELECT count(*) FROM failover_probe;"
+```
+
+### Step 3: Follow the sentinel and stop the primary
+
+In a second terminal:
 
 ```bash
 docker compose logs -f postgres_sentinel
 ```
 
-### Step 3: Simulate Primary Node Crash
-
-Stop `postgres_primary`:
+Then stop the primary:
 
 ```bash
 docker compose stop postgres_primary
 ```
 
-### Step 4: Observe Automatic Standby Promotion
+### Step 4: Observe the promotion
 
-Watch the `postgres_sentinel` terminal. Within ~15–20 seconds (3 failed health probes at 5s intervals), sentinel triggers promotion:
+After 3 failed rounds (5 s apart) and the promotion itself, usually 23 to 26 seconds in total, the sentinel logs:
 
 ```log
-Warning: Primary postgres_primary health check failed (Count: 1 / 3).
-Warning: Primary postgres_primary health check failed (Count: 2 / 3).
-Warning: Primary postgres_primary health check failed (Count: 3 / 3).
-Primary postgres_primary is down! Initiating automatic failover...
-============================================================
-ATTEMPTING AUTOMATIC PROMOTION OF: postgres_replica
-============================================================
-SUCCESS: postgres_replica is now promoted to PRIMARY (pg_is_in_recovery() = false)!
-Failover complete. New primary is postgres_replica.
+No reachable primary (previous: postgres_primary), round 3/3
+FAILOVER: promoting postgres_replica (WAL position ...) among: postgres_replica postgres_replica_2
+Failover complete: new primary is postgres_replica
+Standby postgres_replica_2 now follows postgres_replica (slot: auth_replica_2)
 ```
 
-### Step 5: Verify the Promoted Node Accepts Writes
+The sentinel promotes the standby that has received the most WAL, so it may pick `postgres_replica_2` instead.
 
-Check the recovery status on `postgres_replica`:
+### Step 5: Check that no data was lost and writes work
+
+On the node that was promoted (here `postgres_replica`):
 
 ```bash
-docker compose exec postgres_replica psql -U postgres -d postgres -tAc "SELECT pg_is_in_recovery();"
+docker compose exec -T postgres_replica psql -U postgres -d postgres -c "SELECT count(*) FROM failover_probe; INSERT INTO failover_probe DEFAULT VALUES;"
 ```
 
-_Expected output:_ **`f`** (`false` — node is now an active read-write PRIMARY).
-
-Insert a test record directly into the promoted node:
+The count must equal the one from step 2, and the insert must succeed. The other standby must follow the new primary:
 
 ```bash
-docker compose exec postgres_replica psql -U postgres -d postgres -c "CREATE TABLE IF NOT EXISTS failover_test (id serial, created_at timestamp default now()); INSERT INTO failover_test DEFAULT VALUES; SELECT * FROM failover_test;"
+docker compose exec -T postgres_replica psql -U postgres -d postgres -tAc "SELECT application_name, state FROM pg_stat_replication;"
 ```
 
-### Step 6: Verify Backend Dynamic Routing (`auth-service`)
+### Step 6: Check that `auth-service` followed
 
-Verify that TypeORM detects the newly promoted node on port 5433 as `master`:
+`auth-service` logs `Primary changed from ... reconnecting` and `Reconnected to the new primary ...` within 5 seconds of the promotion, and sign-in works again.
 
-```bash
-pnpm --filter api exec node -r ts-node/register -r tsconfig-paths/register -e "const { resolvePostgresTopology } = require('./apps/auth-service/src/database/pg-topology.resolver'); resolvePostgresTopology(['postgresql://postgres:postgres@localhost:5432/postgres?schema=public', 'postgresql://postgres:postgres@localhost:5433/postgres?schema=public', 'postgresql://postgres:postgres@localhost:5434/postgres?schema=public']).then(console.log);"
-```
-
-_Expected Output:_
-`masterUrl` points to port `5433`, and ports `5432` / `5434` are assigned as `slaveUrls`.
-
-### Step 7: Recover Primary Node (Split-Brain Prevention)
-
-Start `postgres_primary` back up:
+### Step 7: Bring the old primary back
 
 ```bash
 docker compose start postgres_primary
 ```
 
-Check recovery status of `postgres_primary`:
+The old primary finds a primary with a newer timeline, discards its data directory, clones itself from the new primary and starts as a standby (about 2 seconds with this small dataset). Confirm:
 
 ```bash
-docker compose exec postgres_primary psql -U postgres -d postgres -tAc "SELECT pg_is_in_recovery();"
+docker compose exec -T postgres_primary psql -U postgres -d postgres -tAc "SELECT pg_is_in_recovery();"
+docker compose exec -T postgres_replica psql -U postgres -d postgres -tAc "SELECT application_name, state FROM pg_stat_replication;"
 ```
 
-_Expected output:_ **`t`** (`true` — split-brain prevention automatically demotes it to a read-only standby following the new primary).
+_Expected:_ `t`, and two `streaming` standbys on the new primary. The cluster does not switch back by itself: `postgres_replica` stays the primary.
+
+### Step 8: Clean up the marker table
+
+On the current primary:
+
+```bash
+docker compose exec -T postgres_replica psql -U postgres -d postgres -c "DROP TABLE IF EXISTS failover_probe;"
+```
 
 ---
 
-## Automated Script for Fast Demo
+## SCENARIO 3: Network Partition and Fencing of the Old Primary
 
-You can run the end-to-end automated PowerShell script to demonstrate the entire failover cycle in one command:
+A crashed primary cannot do harm. A primary that is only cut off from the network keeps running and stays writable, so it must be fenced when it comes back.
+
+### Step 1: Cut the primary off
+
+Find the network and the container name, then disconnect it:
+
+```bash
+docker network disconnect messenger-clone-microservice_default auth_postgres
+```
+
+(`auth_postgres` is the container of `postgres_primary`; the other nodes are `messenger-clone-microservice-postgres_replica-1` and `messenger-clone-microservice-postgres_replica_2-1`. The network name is `<project>_default`; `docker network ls` lists it.)
+
+The sentinel promotes a standby after about 24 seconds, as in scenario 2.
+
+### Step 2: Reconnect it with its aliases
+
+```bash
+docker network connect --alias postgres_primary --alias auth_postgres messenger-clone-microservice_default auth_postgres
+```
+
+Without `--alias` the node loses the DNS names the other nodes use. For a few seconds two nodes report `f`. Watch the sentinel log:
+
+```log
+SPLIT BRAIN: primaries are postgres_primary postgres_replica; keeping postgres_replica
+FENCING postgres_primary: postgres_replica is the legitimate primary; shutting postgres_primary down
+```
+
+Docker restarts the fenced container, which re-clones itself as a standby. After about 5 seconds only one node reports `f`.
+
+---
+
+## SCENARIO 4: Only the Sentinel Loses Sight of the Primary
+
+If the sentinel cannot reach a healthy primary, promoting a standby would create two primaries. The sentinel therefore asks the standbys first: if one still streams from a primary, it does not promote.
+
+Block only the sentinel's route to the current primary (the `netem-tools` image is the local one used by `report/scripts/netem.sh`: Alpine with `iproute2`):
+
+```bash
+SEN=$(docker compose ps -q postgres_sentinel)
+IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$(docker compose ps -q postgres_replica)")
+docker run --rm --net container:$SEN --cap-add NET_ADMIN netem-tools ip route add blackhole $IP/32
+```
+
+(Use the service that is the primary instead of `postgres_replica` if it is another one.) The log shows, every 5 seconds:
+
+```log
+No reachable primary (previous: postgres_replica), round 4/3
+Not failing over: standby postgres_primary is still streaming from a primary (sentinel may be isolated)
+```
+
+Remove the block:
+
+```bash
+docker run --rm --net container:$SEN --cap-add NET_ADMIN netem-tools ip route del blackhole $IP/32
+```
+
+---
+
+## Automated Script for a Fast Demo
+
+`scripts/simulate-failover.ps1` runs scenarios 2 and 3 end to end without assuming which node is the primary. Each round it writes a marker row, takes the primary out, waits for the new primary, checks that no row was lost, brings the old primary back, waits until it streams again and checks that all three nodes hold the same rows. It exits with code 1 if any check fails.
 
 ```powershell
+# one crash and recovery
 powershell -ExecutionPolicy Bypass -File scripts\simulate-failover.ps1
+
+# three crashes in a row (the primary role moves between nodes)
+powershell -ExecutionPolicy Bypass -File scripts\simulate-failover.ps1 -Rounds 3
+
+# network partition: the old primary comes back writable and must be fenced
+powershell -ExecutionPolicy Bypass -File scripts\simulate-failover.ps1 -Mode Partition
 ```
+
+A run takes about 1 to 2 minutes per round. Writes (sign-in, registration) fail for roughly 25 seconds in each round.

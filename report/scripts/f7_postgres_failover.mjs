@@ -1,6 +1,7 @@
 // Postgres primary failure: ATTENDED USE ONLY.
-// The sentinel watches the fixed host `postgres_primary`, so after one failover the cluster cannot fail over
-// a second time and the original primary is rebuilt as a standby; roles are not restored automatically.
+// It stops the container `auth_postgres`, which is the primary only while `postgres_primary` still holds that role,
+// so check the roles first. For several rounds, any primary and a partition mode, use f8_postgres_multi_failover.mjs.
+// Roles are not restored automatically: the old primary rejoins as a standby of the promoted node.
 // Measures how long sign-in (a write: it stores the refresh token) keeps failing after the primary stops.
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';

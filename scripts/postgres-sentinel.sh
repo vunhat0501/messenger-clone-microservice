@@ -96,6 +96,10 @@ SQL
 
 # Fast shutdown of a stale primary. Its container restarts and postgres-node.sh
 # re-clones it as a standby of the current primary.
+# Limits: COPY ... TO PROGRAM needs a superuser, and signalling PID 1 only works
+# because the node runs as the container's main process. That is acceptable for a
+# development stack; a production setup would fence through the orchestrator or
+# the hypervisor instead. Writes the stale primary accepted while cut off are lost.
 fence() {
     local node="$1" keep="$2"
     log "FENCING $node: $keep is the legitimate primary; shutting $node down"
