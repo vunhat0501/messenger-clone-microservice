@@ -1,0 +1,8 @@
+label,reconnects,mode,sockets_requested,sockets_connected,connect_failures,seconds,rate_per_sender,senders,messages_sent,ack_errors,throughput_msg_s,deliveries_expected,deliveries_received,delivery_ratio,deliver_p50_ms,deliver_p95_ms,deliver_p99_ms,ack_p50_ms,ack_p95_ms
+baseline,0,senders,100,100,0,40,0.2,100,800,0,20,80000,80000,100,16.1,23,38.2,15.6,20.9
+app_redis delay 100ms,0,senders,100,100,0,40,0.2,100,800,0,20,80000,80000,100,213.9,246.9,264,116.1,153.7
+app_redis loss 5%,0,senders,100,100,0,40,0.2,100,799,0,20,79900,79900,100,16.3,66.2,164.5,15.6,60.6
+app_rabbitmq delay 100ms,0,senders,100,100,0,40,0.2,100,798,0,20,79800,79800,100,216.6,253,262.1,215.8,253
+app_rabbitmq loss 5%,0,senders,100,100,0,40,0.2,100,800,0,20,80000,80000,100,16.4,78.7,235.2,15.5,78.4
+chat_mongo delay 100ms,0,senders,100,100,0,40,0.2,100,800,0,20,80000,80000,100,690.8,720.5,757.2,690,718.3
+chat_mongo loss 5%,0,senders,100,100,0,40,0.2,100,800,0,20,80000,80000,100,27.8,389.9,518.4,26.4,390.2

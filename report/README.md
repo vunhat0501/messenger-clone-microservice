@@ -188,6 +188,25 @@ mất 1/3 node thì thông lượng ghi sụp mạnh.
 (đọc và tuần tự hoá khoảng 1.500 tin mỗi yêu cầu), không phải Mongo (CPU mỗi node 6–18%). `secondaryPreferred` chỉ dàn tải
 đều ra ba node.
 
+### 4.8 Mạng chậm và mất gói (`run_p9_netem.sh`)
+
+Dùng `tc netem` qua một container phụ chung mạng với từng thành phần (`netem.sh`), nên không phải sửa cấu hình ứng dụng.
+100 socket, 20 tin/s, 40 s; chèn độ trễ 100 ms hoặc mất gói 5% vào một thành phần mỗi lần. **Tin tới đủ 100% và 0 lỗi ack ở mọi trường hợp**:
+hệ thống suy giảm về độ trễ chứ không mất tin.
+
+| Thành phần    | Tác động   | p50 (ms) | p95 (ms) | p99 (ms) |
+| ------------- | ---------- | -------- | -------- | -------- |
+| (đối chứng)   | không      | 16       | 23       | 38       |
+| Redis         | trễ 100 ms | 214      | 247      | 264      |
+| Redis         | mất gói 5% | 16       | 66       | 165      |
+| RabbitMQ      | trễ 100 ms | 217      | 253      | 262      |
+| RabbitMQ      | mất gói 5% | 16       | 79       | 235      |
+| Mongo primary | trễ 100 ms | 691      | 721      | 757      |
+| Mongo primary | mất gói 5% | 28       | 390      | 518      |
+
+Trễ một chiều 100 ms cộng khoảng 200 ms (một vòng đi về) cho Redis và RabbitMQ, nhưng khoảng 700 ms cho Mongo vì mỗi lần ghi
+`w: majority` cần nhiều vòng đi về giữa các node.
+
 ---
 
 ## 5. Phát hiện chưa sửa và giới hạn
@@ -197,14 +216,18 @@ mất 1/3 node thì thông lượng ghi sụp mạnh.
    sống tuỳ thời điểm). Sửa bằng `common/rmq-rejection-guard.ts` (cài ở `main.ts` của chat-service và auth-service): ghi log các
    lỗi mất kết nối broker và chạy tiếp; mọi lỗi chưa xử lý khác vẫn dừng tiến trình. Đã kiểm chứng bằng cách chạy lại hai kịch
    bản (chết và ngắt mạng RabbitMQ) dưới tải 250 socket: chat-service sống và tự nhận việc lại.
-2. **Sentinel Postgres chỉ failover được một lần.** Nó theo dõi cố định host `postgres_primary`; sau lần failover đầu,
-   primary cũ được dựng lại thành standby và không còn failover lần hai. Nếu sentinel chỉ mất mạng tới primary (primary
-   vẫn sống) thì có thể sinh hai primary (split-brain). Sentinel cũng là một điểm chết đơn.
-3. **Auth-service lúc trước chỉ dò Postgres primary khi khởi động**; đã thêm watcher nhưng chưa thử với Postgres chết thật.
+2. **Sau failover Postgres, các standby không tự bám theo primary mới.** Các replication slot (`auth_replica`, `auth_replica_2`)
+   chỉ có trên primary cũ; primary mới (node được `pg_promote()`) không có nên cả hai standby báo `replication slot ... does not exist`
+   và ngừng nhận dữ liệu. Sửa tay (không mất dữ liệu): tạo hai slot trên primary mới; một standby (primary cũ sau khi bật lại) bám lại
+   được; standby còn lại vẫn trỏ `host=postgres_primary` nên phải đổi `primary_conninfo`, và nếu WAL cần đã bị dọn (đã xảy ra) thì phải
+   dựng lại bằng `pg_basebackup` (xoá và nhân bản lại dữ liệu của node đó). Hệ quả: sau một lần failover, cụm chỉ còn một primary sống.
+3. **Sentinel Postgres chỉ failover được một lần.** Nó theo dõi cố định host `postgres_primary`; sau lần failover đầu không còn failover
+   lần hai. Nếu sentinel chỉ mất mạng tới primary (primary vẫn sống) thì có thể sinh hai primary (split-brain). Sentinel cũng là một điểm
+   chết đơn. Vai trò node sau failover: primary chuyển sang `postgres_replica` (cổng 5433), `auth_postgres` (5432) thành standby.
 4. **Cookie gắn theo host:** hai người dùng cùng trên một máy phải dùng hai trình duyệt (hoặc cửa sổ riêng tư) cùng `localhost`.
 5. **Hạ tầng cùng một máy**, ứng dụng chưa đóng gói Docker (không có Dockerfile), không có mạng thật giữa các nút.
 6. 7 tệp spec dựng sẵn của auth-service và chat-service vẫn lỗi (lệch dependency injection), có từ trước, chưa sửa.
-7. Chưa đo: mạng chậm hoặc mất gói; Postgres failover thật (script `f7_postgres_failover.mjs` đã có nhưng chưa chạy).
+7. Chưa đo: chia cắt mạng của Postgres, nhiều lần failover liên tiếp, cụm Postgres sau khi dựng lại standby.
 
 ---
 
