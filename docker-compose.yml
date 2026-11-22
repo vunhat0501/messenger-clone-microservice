@@ -55,7 +55,7 @@ services:
             test:
                 [
                     'CMD-SHELL',
-                    'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -tAc "SELECT pg_is_in_recovery()" | grep -qx t',
+                    'pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"',
                 ]
             interval: 5s
             timeout: 5s
@@ -86,7 +86,7 @@ services:
             test:
                 [
                     'CMD-SHELL',
-                    'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -tAc "SELECT pg_is_in_recovery()" | grep -qx t',
+                    'pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"',
                 ]
             interval: 5s
             timeout: 5s
