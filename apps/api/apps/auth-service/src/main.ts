@@ -4,8 +4,10 @@ import { AuthServiceModule } from './auth-service.module';
 import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { env } from 'apps/api/src/config/env.config';
 import { ValidationPipe } from '@nestjs/common';
+import { installRmqRejectionGuard } from 'apps/api/src/common/rmq-rejection-guard';
 
 async function bootstrap() {
+  installRmqRejectionGuard();
   const app = await NestFactory.createMicroservice<MicroserviceOptions>(
     AuthServiceModule,
     {
