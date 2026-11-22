@@ -3,6 +3,7 @@ import { ConfigModule, ConfigType } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import postgresConfig from 'apps/auth-service/src/config/postgres.config';
 import { DataSource } from 'typeorm';
+import { PostgresTopologyWatcher } from './postgres-topology-watcher';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { DataSource } from 'typeorm';
       }),
     }),
   ],
+  providers: [PostgresTopologyWatcher],
 })
 export class DatabaseModule implements OnModuleInit {
   private readonly logger = new Logger(DatabaseModule.name);

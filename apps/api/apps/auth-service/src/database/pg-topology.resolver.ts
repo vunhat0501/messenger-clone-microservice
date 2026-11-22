@@ -4,6 +4,7 @@ import { Client } from 'pg';
 export interface PostgresTopology {
   masterUrl: string;
   slaveUrls: string[];
+  primaryDetected: boolean;
 }
 
 const logger = new Logger('PgTopologyResolver');
@@ -55,6 +56,7 @@ export async function resolvePostgresTopology(
   }
 
   let masterUrl: string | null = null;
+  let primaryDetected = true;
   const slaveUrls: string[] = [];
 
   for (const url of validUrls) {
@@ -75,6 +77,7 @@ export async function resolvePostgresTopology(
 
   // Fallback if no node was currently detected as primary (e.g. during failover transition)
   if (!masterUrl) {
+    primaryDetected = false;
     logger.warn(
       `No active PRIMARY found with pg_is_in_recovery() = false. Falling back to default URL: ${validUrls[0]}`,
     );
@@ -84,5 +87,6 @@ export async function resolvePostgresTopology(
   return {
     masterUrl,
     slaveUrls,
+    primaryDetected,
   };
 }
