@@ -32,19 +32,36 @@ Trình duyệt ── Next.js (BFF, cổng 3000)
       │                                auth-service         chat-service
       │                                       │                  │
       │                      PostgreSQL 1 primary + 2 standby   MongoDB replica set rs0 (3 node)
-      │                      + sentinel (promote)                (bầu primary tự động)
+      │                      + sentinel (failover, fencing)      (bầu primary tự động)
 ```
 
 ### Đánh giá trung thực về tính phân tán
 
-| Nhận định                 | Thực tế trong code                                                                                                                                                                        |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Chat đa instance          | **Đúng.** 2 gateway sau Nginx, tin chéo gateway đi qua Redis adapter, trạng thái online dùng chung trong Redis. Auth và chat mặc định chạy 1 bản nhưng nhân được (đã thử 2 chat-service)  |
-| Microservice              | **Đúng một phần.** Tiến trình riêng, CSDL riêng, nhưng auth/chat import mã của gateway (`env.config`, `redis-cache.module`, `jwt.config`) nên còn gắn chặt về mã nguồn                    |
-| RabbitMQ là message queue | **Đúng về công cụ, hẹp về vai trò.** 20 lời gọi `.send()` (yêu cầu - trả lời, RPC), 0 lời gọi `.emit()` (sự kiện). Sự kiện realtime giữa gateway đi qua Redis pub/sub, không qua RabbitMQ |
-| Polyglot database         | **Đúng.** PostgreSQL (auth, user), MongoDB (hội thoại, tin nhắn), Redis (cache, pub/sub, presence)                                                                                        |
-| Read-only replica         | **Có cơ chế, dùng hẹp.** Postgres chỉ đọc replica ở `findAll` người dùng; Mongo đọc theo `MONGO_READ_PREFERENCE`, hiện cấu hình `primary` nên thực tế không đọc từ replica                |
-| Bầu chọn node             | **Mongo: đúng** (replica set bầu theo đa số). **Postgres: không có bầu chọn thật**, chỉ có một sentinel ping primary rồi `pg_promote()` replica theo thứ tự cố định                       |
+| Nhận định                 | Thực tế trong code                                                                                                                                                                           |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Chat đa instance          | **Đúng.** 2 gateway sau Nginx, tin chéo gateway đi qua Redis adapter, trạng thái online dùng chung trong Redis. Auth và chat mặc định chạy 1 bản nhưng nhân được (đã thử 2 chat-service)     |
+| Microservice              | **Đúng một phần.** Tiến trình riêng, CSDL riêng, nhưng auth/chat import mã của gateway (`env.config`, `redis-cache.module`, `jwt.config`) nên còn gắn chặt về mã nguồn                       |
+| RabbitMQ là message queue | **Đúng về công cụ, hẹp về vai trò.** 20 lời gọi `.send()` (yêu cầu - trả lời, RPC), 0 lời gọi `.emit()` (sự kiện). Sự kiện realtime giữa gateway đi qua Redis pub/sub, không qua RabbitMQ    |
+| Polyglot database         | **Đúng.** PostgreSQL (auth, user), MongoDB (hội thoại, tin nhắn), Redis (cache, pub/sub, presence)                                                                                           |
+| Read-only replica         | **Có cơ chế, dùng hẹp.** Postgres chỉ đọc replica ở `findAll` người dùng; Mongo đọc theo `MONGO_READ_PREFERENCE`, hiện cấu hình `primary` nên thực tế không đọc từ replica                   |
+| Bầu chọn node             | **Mongo: đúng** (replica set bầu theo đa số). **Postgres: không bầu theo đa số**: một sentinel chọn standby có WAL mới nhất rồi `pg_promote()`, và chặn primary cũ khi nó quay lại (xem 4.9) |
+
+### Tính năng và cơ chế đã thêm
+
+Mỗi dòng là một cơ chế được thêm hoặc sửa để hệ thống chịu lỗi, mở rộng hoặc nhất quán hơn, kèm mục có số liệu đo.
+
+| Cơ chế                                                                           | Phục vụ             | Tệp chính                                                                    | Kết quả đo                                      |
+| -------------------------------------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------- |
+| Redis chết không làm sập dịch vụ (cache, adapter)                                | Chịu lỗi            | `common/cache/redis-cache.store.ts`, `common/adapter/redis-io.adapter.ts`    | 4.4: 0/53 mẫu lỗi khi Redis chết 12 s           |
+| Trạng thái online có hạn sống (nhịp tim 10 s, quét 15 s)                         | Chịu lỗi            | `chat/gateway/presence.service.ts`                                           | 4.4: thấy offline sau khoảng 31–40 s            |
+| Gửi tin không mất và không trùng (`clientMessageId`, Retry)                      | Nhất quán           | `message.schema.ts`, `chat-service.service.ts`, `ChatContainer.tsx`          | 4.4: 73/73 tin an toàn khi tắt một chat-service |
+| Socket tự nối lại khi gateway chết hoặc token hết hạn                            | Chịu lỗi            | `ChatContainer.tsx`, `lib/api.ts`                                            | 4.4: nối lại sang gateway kia sau 163 ms        |
+| Chạy 2 gateway sau Nginx, BFF gọi qua Nginx, `keepalive`                         | Mở rộng             | `nginx.conf`, `apps/web/config/env.config.ts`                                | 4.2: p95 3.344 xuống 220 ms ở 500 socket        |
+| Cache chỉ trang tin nhắn mặc định                                                | Nhất quán           | `chat-service.service.ts`                                                    | 4.2: 996 so với 145 yêu cầu/giây khi bật cache  |
+| Mongo tự theo primary mới (mỗi node một cổng, `MONGO_HOST_MAP`)                  | Chịu lỗi            | `docker-compose.yml`, `scripts/mongo-init-rs.sh`, `chat-service/src/config/` | 4.4: bầu primary mới khoảng 10–12 s             |
+| Auth-service và chat-service sống khi RabbitMQ mất                               | Chịu lỗi            | `common/rmq-rejection-guard.ts`                                              | 4.6: tin tới đủ tăng từ 42,6% lên 66,6%         |
+| Auth-service tự theo Postgres primary mới                                        | Chịu lỗi            | `database/postgres-topology-watcher.ts`, `database/pg-topology.resolver.ts`  | 4.9: ghi hồi phục sau khoảng 23–26 s            |
+| Sentinel Postgres failover nhiều lần, chặn primary cũ, node cũ tự về làm standby | Chịu lỗi, nhất quán | `scripts/postgres-sentinel.sh`, `scripts/postgres-node.sh`                   | 4.9: 3 vòng liên tiếp, không có hai primary     |
 
 **Điểm chết đơn còn lại:** một Redis, một RabbitMQ, một Nginx, một sentinel Postgres.
 Phân tích chi tiết hơn: [../distributed_system_report.md](../distributed_system_report.md) (một số chỗ tả
@@ -88,8 +105,13 @@ theo dõi nhầm thư mục `dist` nên gateway 8009 không tự khởi động 
 - **Lỗi trên `main` đã sửa:** `postgresConfig` thành hàm bất đồng bộ nhưng `postgres-database.module.ts` vẫn dùng
   `configService.get('postgres')` (một Promise) nên auth-service chết với `MissingDriverError`. Nay inject `postgresConfig.KEY`.
   Spec `database-replication.spec.ts` cũng được cập nhật cho khớp.
-- **Auth tự theo Postgres primary mới:** `postgres-topology-watcher.ts` dò lại primary mỗi 5 s và kết nối lại khi đổi
-  (có 3 test; **chưa thử với Postgres chết thật**).
+- **Auth tự theo Postgres primary mới:** `postgres-topology-watcher.ts` dò lại primary mỗi 5 s và kết nối lại khi đổi.
+  Đã thử với Postgres chết thật và bị ngắt mạng (xem 4.9). Bộ dò (`pg-topology.resolver.ts`) chọn node có timeline cao nhất
+  khi có hai primary, và pool có giới hạn thời gian truy vấn (`postgres.config.ts`).
+- **Cụm Postgres tự failover nhiều lần:** sentinel viết lại (`scripts/postgres-sentinel.sh`) và script khởi động chung
+  `scripts/postgres-node.sh` thay hai script cũ `postgres-primary.sh` và `postgres-standby.sh`; mỗi node có replication slot riêng
+  (chi tiết ở mục 5, kết quả đo ở 4.9). Volume cũ vẫn dùng được, không cần dựng lại.
+- **Auth-service và chat-service không còn chết khi mất RabbitMQ:** `common/rmq-rejection-guard.ts` (xem mục 5, điểm 1).
 - CORS của gateway do `main` thu hẹp (`localhost:3000/80/8080`) được giữ nguyên.
 
 ---
@@ -207,6 +229,33 @@ hệ thống suy giảm về độ trễ chứ không mất tin.
 Trễ một chiều 100 ms cộng khoảng 200 ms (một vòng đi về) cho Redis và RabbitMQ, nhưng khoảng 700 ms cho Mongo vì mỗi lần ghi
 `w: majority` cần nhiều vòng đi về giữa các node.
 
+### 4.9 Failover Postgres nhiều lần và chống hai primary (`f8_postgres_multi_failover.mjs`)
+
+Mỗi vòng: tìm primary hiện tại, tắt nó (`stop`: `docker stop`; `partition`: ngắt khỏi mạng Docker), đo thời gian đăng nhập
+(một thao tác ghi refresh token) bị lỗi, rồi bật lại node cũ và đo thời gian nó quay về làm standby. Kết quả ở
+`ket-qua/p10_postgres_multi_failover.csv`.
+
+| Kịch bản                     | Số vòng | Ghi gián đoạn      | Hai primary cùng lúc   | Node cũ về làm standby | Standby streaming sau đó |
+| ---------------------------- | ------- | ------------------ | ---------------------- | ---------------------- | ------------------------ |
+| Tắt primary, trước sửa app   | 3       | 72,9 s; 26,2; 23,7 | không                  | khoảng 2,1–2,2 s       | 2/2                      |
+| Ngắt mạng primary, trước sửa | 1       | hơn 60 s           | có, sentinel chặn ngay | 6,4 s                  | 2/2                      |
+| Tắt primary, sau sửa app     | 3       | 25,9 s; 23,7; 22,6 | không                  | khoảng 2,1 s           | 2/2                      |
+| Ngắt mạng primary, sau sửa   | 1       | 24,3 s             | có, sentinel chặn ngay | 2,1 s                  | 2/2                      |
+
+Vai trò xoay vòng qua các node (`postgres_primary` → `postgres_replica` → `postgres_primary` ...) mà không cần thao tác tay.
+Khoảng 23–26 s gián đoạn gồm: sentinel cần 3 lần kiểm tra lỗi liên tiếp (5 s một lần, mỗi lần chờ kết nối tối đa 3 s),
+promote khoảng 1–2 s, rồi auth-service nhận ra primary mới trong vòng 5 s.
+
+Hai lỗi phía ứng dụng chỉ lộ ra khi đo thật, đã sửa:
+
+1. **Ghi vào primary cũ trong lúc có hai primary.** Bộ dò topology chọn primary đầu tiên theo thứ tự cấu hình, nên khi node cũ
+   (vẫn ghi được) nối mạng lại, auth-service chuyển sang ghi vào nó khoảng 5 s trước khi sentinel kịp tắt nó; các bản ghi đó
+   mất khi node cũ bị nhân bản lại. Nay `pg-topology.resolver.ts` chọn node có timeline cao nhất (lần promote mới nhất) và
+   bỏ hẳn node cũ, kể cả khỏi danh sách đọc.
+2. **Gián đoạn ghi hơn 60 s khi primary mất mạng.** Truy vấn đang treo vào node mất mạng không bao giờ trả về, nên
+   `destroy()` của watcher phải chờ, và mọi yêu cầu trong lúc đó lỗi `Cannot use a pool after calling end on the pool`. Nay pool
+   có `query_timeout` 10 s, `connectionTimeoutMillis` 3 s và `keepAlive` (`postgres.config.ts`): từ hơn 60 s xuống 24 s.
+
 ---
 
 ## 5. Phát hiện chưa sửa và giới hạn
@@ -216,18 +265,30 @@ Trễ một chiều 100 ms cộng khoảng 200 ms (một vòng đi về) cho Red
    sống tuỳ thời điểm). Sửa bằng `common/rmq-rejection-guard.ts` (cài ở `main.ts` của chat-service và auth-service): ghi log các
    lỗi mất kết nối broker và chạy tiếp; mọi lỗi chưa xử lý khác vẫn dừng tiến trình. Đã kiểm chứng bằng cách chạy lại hai kịch
    bản (chết và ngắt mạng RabbitMQ) dưới tải 250 socket: chat-service sống và tự nhận việc lại.
-2. **Sau failover Postgres, các standby không tự bám theo primary mới.** Các replication slot (`auth_replica`, `auth_replica_2`)
-   chỉ có trên primary cũ; primary mới (node được `pg_promote()`) không có nên cả hai standby báo `replication slot ... does not exist`
-   và ngừng nhận dữ liệu. Sửa tay (không mất dữ liệu): tạo hai slot trên primary mới; một standby (primary cũ sau khi bật lại) bám lại
-   được; standby còn lại vẫn trỏ `host=postgres_primary` nên phải đổi `primary_conninfo`, và nếu WAL cần đã bị dọn (đã xảy ra) thì phải
-   dựng lại bằng `pg_basebackup` (xoá và nhân bản lại dữ liệu của node đó). Hệ quả: sau một lần failover, cụm chỉ còn một primary sống.
-3. **Sentinel Postgres chỉ failover được một lần.** Nó theo dõi cố định host `postgres_primary`; sau lần failover đầu không còn failover
-   lần hai. Nếu sentinel chỉ mất mạng tới primary (primary vẫn sống) thì có thể sinh hai primary (split-brain). Sentinel cũng là một điểm
-   chết đơn. Vai trò node sau failover: primary chuyển sang `postgres_replica` (cổng 5433), `auth_postgres` (5432) thành standby.
+2. **Sau failover Postgres, các standby không tự bám theo primary mới (ĐÃ SỬA).** Replication slot chỉ nằm trên primary đã tạo
+   ra nó, nên sau `pg_promote()` các standby báo `replication slot ... does not exist` và ngừng nhận dữ liệu; standby còn lại vẫn trỏ
+   `host=postgres_primary`. Sửa: mỗi node có slot riêng (`auth_primary`, `auth_replica`, `auth_replica_2`). Sau khi promote, sentinel
+   tạo slot đó trên primary mới rồi đổi `primary_conninfo` và `primary_slot_name` của từng standby bằng `ALTER SYSTEM` và
+   `pg_reload_conf()`, không cần khởi động lại. Mỗi vòng kiểm tra, sentinel cũng sửa lại standby nào đang trỏ sai.
+3. **Sentinel Postgres chỉ failover được một lần (ĐÃ SỬA).** Sentinel cũ theo dõi cố định host `postgres_primary`. Bản mới
+   (`scripts/postgres-sentinel.sh`) mỗi vòng hỏi cả ba node, nên failover được nhiều lần liên tiếp:
+   - **Chọn node promote:** standby có vị trí WAL nhận được lớn nhất (mất ít dữ liệu nhất).
+   - **Ý kiến thứ hai trước khi promote:** nếu còn standby đang `streaming` thì primary vẫn sống và chỉ sentinel mất mạng tới nó,
+     nên sentinel không promote (tránh tự sinh hai primary). Standby nhận ra mất primary trong vòng 15 s (`wal_receiver_timeout`).
+   - **Chặn primary cũ (fencing):** khi thấy hai primary, sentinel giữ node nó đang theo (hoặc node có timeline cao hơn) và tắt
+     node kia bằng `COPY ... TO PROGRAM 'kill -INT 1'` (dừng nhanh tiến trình chính của container); Docker bật lại container.
+   - **Tự quay về làm standby:** script khởi động chung `scripts/postgres-node.sh` (thay `postgres-primary.sh` và
+     `postgres-standby.sh`) không dựa vào tên dịch vụ. Lúc khởi động nó tìm primary trong các node khác. Nếu node này từng là
+     primary mà node khác đang là primary trên timeline mới hơn hoặc bằng, nó bỏ dữ liệu cũ và nhân bản lại bằng `pg_basebackup`.
+
+   Giới hạn còn lại: sentinel vẫn là **một tiến trình duy nhất** (điểm chết đơn, không có đồng thuận đa số như Patroni với etcd);
+   nhân bản lại toàn bộ thay vì `pg_rewind` (nhanh vì CSDL nhỏ, sẽ chậm với dữ liệu lớn); bản ghi vào primary cũ sau khi đã tách
+   mạng (trước khi bị chặn) sẽ mất; mật khẩu tài khoản replication nằm trong `.pgpass` ở thư mục dữ liệu của mỗi node.
+
 4. **Cookie gắn theo host:** hai người dùng cùng trên một máy phải dùng hai trình duyệt (hoặc cửa sổ riêng tư) cùng `localhost`.
 5. **Hạ tầng cùng một máy**, ứng dụng chưa đóng gói Docker (không có Dockerfile), không có mạng thật giữa các nút.
 6. 7 tệp spec dựng sẵn của auth-service và chat-service vẫn lỗi (lệch dependency injection), có từ trước, chưa sửa.
-7. Chưa đo: chia cắt mạng của Postgres, nhiều lần failover liên tiếp, cụm Postgres sau khi dựng lại standby.
+7. Chưa đo: failover Postgres trong lúc tải lớn; trường hợp chỉ sentinel mất mạng (bước "ý kiến thứ hai" chưa được thử thật).
 
 ---
 
@@ -237,6 +298,8 @@ Yêu cầu: Node 20+, pnpm 10.4.1 (dùng `pnpm.cmd` nếu PowerShell chặn `pnp
 gốc (không có trong git) với các biến: `DATABASE_URL`, `DATABASE_REPLICA_URL`, `DATABASE_REPLICA_2_URL`, `MONGO_URI`
 (liệt kê 3 host `localhost:27017,27018,27019`), `MONGO_REPLICA_SET=rs0`, `MONGO_HOST_MAP`, `MONGO_READ_PREFERENCE`,
 `RABBITMQ_URL`, `REDIS_URL`, `JWT_SECRET`, `JWT_EXPIRES_IN`, `REFRESH_JWT_SECRET`, `REFRESH_JWT_EXPIRES_IN`.
+Docker Compose còn cần `DB_USER`, `DB_PASS`, `DB_NAME` và `PG_REPL_PASSWORD` (mật khẩu tài khoản nhân bản Postgres; bắt buộc,
+Compose từ chối chạy nếu thiếu).
 Ý nghĩa từng biến xem `apps/api/apps/api/src/config/env.config.ts` và [../docs/database-replication.md](../docs/database-replication.md).
 
 ```powershell
@@ -244,6 +307,15 @@ docker compose up -d
 docker compose ps                      # đợi mọi container healthy
 pnpm.cmd --filter api dev              # terminal 1: 2 gateway, auth-service, chat-service
 pnpm.cmd --filter web dev              # terminal 2: web ở http://localhost:3000
+```
+
+Sau một lần failover, vai trò node Postgres đổi và **không tự đổi lại** (`postgres_primary` có thể là standby). Xem node nào đang
+là primary (`f` là primary, `t` là standby):
+
+```powershell
+docker compose exec -T postgres_primary sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select pg_is_in_recovery()"'
+docker compose exec -T postgres_replica sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select pg_is_in_recovery()"'
+docker compose exec -T postgres_replica_2 sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select pg_is_in_recovery()"'
 ```
 
 Mở hai trình duyệt khác nhau (hoặc một cửa sổ riêng tư) cùng vào `http://localhost:3000`, đăng nhập hai tài khoản thử,
@@ -263,6 +335,7 @@ nên chạy từng cái một và kiểm tra hệ thống đã về bình thư�
 | Tải WebSocket                            | `node report/scripts/p1_ws_load.mjs senders 250 20` hoặc `bash report/scripts/run_p1_matrix.sh` |
 | Mở rộng 1 so với 2 gateway, chat-service | `bash report/scripts/run_p2_scale.sh`                                                           |
 | Chạy dài 30 phút kèm CPU/RAM             | `bash report/scripts/run_p7_soak.sh`                                                            |
+| Failover Postgres nhiều lần, ngắt mạng   | `node report/scripts/f8_postgres_multi_failover.mjs 3 stop` (hoặc `1 partition`)                |
 
 Các bài tải tạo nhiều tin có tiền tố `load-` trong MongoDB; xoá chúng sau khi đo (chỉ theo tiền tố đó).
 Lưu ý: nếu RabbitMQ đếm được nhiều hơn 1 bản nhận việc cho `auth_queue` hoặc `chat_queue` thì còn tiến trình dư từ lần
@@ -272,11 +345,12 @@ chạy trước; dừng hết rồi chạy lại backend, nếu không kết qu�
 
 ## 7. Bản đồ tệp
 
-| Đường dẫn                                                                                  | Nội dung                                                                                |
-| ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
-| [LOI_PHAT_HIEN_TRONG_DEMO.md](LOI_PHAT_HIEN_TRONG_DEMO.md)                                 | 11 lỗi, ảnh trước và sau khi sửa                                                        |
-| [ket-qua/](ket-qua/)                                                                       | CSV: `p1_ws_load`, `p2_scale`, `p6_resources`, `p7_soak` (và hai bản của lần đo hỏng)   |
-| [images/](images/)                                                                         | Ảnh chụp giao diện trước và sau khi sửa                                                 |
-| [scripts/](scripts/)                                                                       | Script đo: tải (`p1_*`, `run_p*`), lỗi (`f1`–`f7`), tài nguyên (`sample_resources.mjs`) |
-| [../docs/](../docs/)                                                                       | Tài liệu replication và mô phỏng failover của nhóm                                      |
-| [../distributed_system_report.md](../distributed_system_report.md), [../erd.md](../erd.md) | Báo cáo kiến trúc và thiết kế CSDL của nhóm                                             |
+| Đường dẫn                                                                                  | Nội dung                                                                                   |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| [LOI_PHAT_HIEN_TRONG_DEMO.md](LOI_PHAT_HIEN_TRONG_DEMO.md)                                 | 11 lỗi, ảnh trước và sau khi sửa                                                           |
+| [ket-qua/](ket-qua/)                                                                       | CSV: `p1`, `p2`, `p3`, `p6`–`p10` (và hai bản của lần đo hỏng, hậu tố `_cum_mongo_2_of_3`) |
+| [images/](images/)                                                                         | Ảnh chụp giao diện trước và sau khi sửa                                                    |
+| [scripts/](scripts/)                                                                       | Script đo: tải (`p1_*`, `run_p*`), lỗi (`f1`–`f8`), tài nguyên (`sample_resources.mjs`)    |
+| [../scripts/](../scripts/)                                                                 | `postgres-sentinel.sh` (failover, chặn primary cũ), `postgres-node.sh` (khởi động node)    |
+| [../docs/](../docs/)                                                                       | Tài liệu replication và mô phỏng failover của nhóm                                         |
+| [../distributed_system_report.md](../distributed_system_report.md), [../erd.md](../erd.md) | Báo cáo kiến trúc và thiết kế CSDL của nhóm                                                |
