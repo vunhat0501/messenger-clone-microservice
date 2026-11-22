@@ -20,6 +20,8 @@ export interface ChatMessage {
   text: string;
   createdAt: string;
   readBy?: string[];
+  clientMessageId?: string;
+  status?: 'sending' | 'failed';
 }
 
 export interface UserSummary {

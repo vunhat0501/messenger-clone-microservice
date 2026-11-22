@@ -62,4 +62,25 @@ describe('Chat replica reads', () => {
     expect(messages.find).not.toHaveBeenCalled();
     expect(query.read).not.toHaveBeenCalled();
   });
+
+  describe('message history cache', () => {
+    const conversationId = '507f1f77bcf86cd799439011';
+
+    beforeEach(() => {
+      conversations.findOne.mockResolvedValue({ _id: conversationId });
+    });
+
+    it('caches the default page, which is the key that writes invalidate', async () => {
+      await service.getMessages(conversationId, 1);
+      expect(cacheManager.get).toHaveBeenCalledTimes(1);
+      expect(cacheManager.set).toHaveBeenCalledTimes(1);
+    });
+
+    it('bypasses the cache for other page sizes, which writes do not invalidate', async () => {
+      await service.getMessages(conversationId, 1, 50);
+      expect(cacheManager.get).not.toHaveBeenCalled();
+      expect(cacheManager.set).not.toHaveBeenCalled();
+      expect(messages.find).toHaveBeenCalled();
+    });
+  });
 });

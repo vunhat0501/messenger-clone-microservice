@@ -1,9 +1,12 @@
-import { Global, Module } from '@nestjs/common';
-import { CacheModule } from '@nestjs/cache-manager';
-import KeyvRedis from '@keyv/redis';
-import { Keyv } from 'keyv';
+import { Global, Inject, Module, OnModuleInit } from '@nestjs/common';
+import { CACHE_MANAGER, CacheModule } from '@nestjs/cache-manager';
+import type { Cache } from 'cache-manager';
 import { env } from 'apps/api/src/config/env.config';
 import { CACHE_KEYS, CACHE_TTL } from './cache.constants';
+import {
+  createRedisCacheStore,
+  handleRedisCacheError,
+} from './redis-cache.store';
 
 export { CACHE_KEYS, CACHE_TTL };
 
@@ -13,15 +16,19 @@ export { CACHE_KEYS, CACHE_TTL };
     CacheModule.registerAsync({
       isGlobal: true,
       useFactory: () => ({
-        stores: [
-          new Keyv({
-            store: new KeyvRedis(env.REDIS_URL),
-          }),
-        ],
+        stores: [createRedisCacheStore(env.REDIS_URL)],
         ttl: CACHE_TTL.USERS_ALL,
       }),
     }),
   ],
   exports: [CacheModule],
 })
-export class RedisCacheModule {}
+export class RedisCacheModule implements OnModuleInit {
+  constructor(@Inject(CACHE_MANAGER) private readonly cacheManager: Cache) {}
+
+  onModuleInit() {
+    for (const store of this.cacheManager.stores) {
+      store.on('error', handleRedisCacheError);
+    }
+  }
+}

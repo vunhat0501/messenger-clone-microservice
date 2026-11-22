@@ -36,6 +36,11 @@ promote_node() {
 
     if [ "$status" = "f" ]; then
         echo "[$(date -u)] SUCCESS: $target is now promoted to PRIMARY (pg_is_in_recovery() = false)!"
+        # Create replication slots on the newly promoted primary so existing standbys can replicate from it
+        PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$target" -p "$PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "
+            SELECT pg_create_physical_replication_slot('auth_replica') WHERE NOT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = 'auth_replica');
+            SELECT pg_create_physical_replication_slot('auth_replica_2') WHERE NOT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = 'auth_replica_2');
+        " 2>/dev/null || true
         return 0
     else
         echo "[$(date -u)] FAILED: Could not promote $target (status: $status)."

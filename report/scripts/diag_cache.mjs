@@ -1,0 +1,13 @@
+import { login, ensureConversation, api } from './lib.mjs';
+const base = 'http://localhost:8008';
+const alice = await login('alice', base), bob = await login('bob', base);
+const conv = await ensureConversation(alice, bob);
+const msgs = async (limit) => (await api('GET', `/chat/conversations/${conv}/messages?limit=${limit}`, { token: bob.token, base })).json?.data || [];
+const tail = (a) => a.slice(-3).map((m) => `${m.text}@${m.createdAt?.slice(11, 19)}`).join(' | ');
+const a100 = await msgs(100);
+console.log('limit=100 (fresh) count', a100.length, 'tail:', tail(a100));
+const a70 = await msgs(70);
+console.log('limit=70            count', a70.length, 'tail:', tail(a70));
+const list = (await api('GET', '/chat/conversations', { token: bob.token, base })).json?.data || [];
+console.log('conversation list: n=', list.length, 'snippets:', list.map((c) => c.lastMessageSnippet).join(' | '));
+process.exit(0);

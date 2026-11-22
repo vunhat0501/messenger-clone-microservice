@@ -55,7 +55,7 @@ services:
             test:
                 [
                     'CMD-SHELL',
-                    'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -tAc "SELECT pg_is_in_recovery()" | grep -qx t',
+                    'pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"',
                 ]
             interval: 5s
             timeout: 5s
@@ -86,7 +86,7 @@ services:
             test:
                 [
                     'CMD-SHELL',
-                    'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -tAc "SELECT pg_is_in_recovery()" | grep -qx t',
+                    'pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"',
                 ]
             interval: 5s
             timeout: 5s
@@ -183,9 +183,11 @@ services:
                 '--bind_ip_all',
                 '--keyFile',
                 '/keys/replica.key',
+                '--port',
+                '27018',
             ]
         ports:
-            - 27018:27017
+            - 27018:27018
         volumes:
             - mongo_replica_data:/data/db
             - mongo_keyfile:/keys:ro
@@ -198,6 +200,8 @@ services:
                     'CMD',
                     'mongosh',
                     '--quiet',
+                    '--port',
+                    '27018',
                     '--eval',
                     'quit(db.adminCommand({ping:1}).ok ? 0 : 1)',
                 ]
@@ -216,9 +220,11 @@ services:
                 '--bind_ip_all',
                 '--keyFile',
                 '/keys/replica.key',
+                '--port',
+                '27019',
             ]
         ports:
-            - 27019:27017
+            - 27019:27019
         volumes:
             - mongo_replica_2_data:/data/db
             - mongo_keyfile:/keys:ro
@@ -231,6 +237,8 @@ services:
                     'CMD',
                     'mongosh',
                     '--quiet',
+                    '--port',
+                    '27019',
                     '--eval',
                     'quit(db.adminCommand({ping:1}).ok ? 0 : 1)',
                 ]

@@ -1,9 +1,10 @@
-import { Inject, Logger } from '@nestjs/common';
+import { Inject, Logger, OnModuleDestroy } from '@nestjs/common';
 import {
   ConnectedSocket,
   MessageBody,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  OnGatewayInit,
   SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
@@ -19,7 +20,12 @@ import {
 } from 'rxjs';
 import { JwtService } from '@nestjs/jwt';
 import { env } from 'apps/api/src/config/env.config';
-import { PresenceService } from './presence.service';
+import {
+  PRESENCE_HEARTBEAT_MS,
+  PRESENCE_SWEEP_MS,
+  PresenceEntry,
+  PresenceService,
+} from './presence.service';
 
 @WebSocketGateway({
   cors: {
@@ -39,17 +45,71 @@ import { PresenceService } from './presence.service';
     credentials: true,
   },
 })
-export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class ChatGateway
+  implements
+    OnGatewayInit,
+    OnGatewayConnection,
+    OnGatewayDisconnect,
+    OnModuleDestroy
+{
   @WebSocketServer()
   server: Server;
 
   private readonly logger = new Logger(ChatGateway.name);
+  private presenceTimers: NodeJS.Timeout[] = [];
 
   constructor(
     @Inject('CHAT_SERVICE') private readonly chatClient: ClientProxy,
     private readonly jwtService: JwtService,
     private readonly presenceService: PresenceService,
   ) {}
+
+  afterInit() {
+    const heartbeat = setInterval(
+      () => void this.refreshPresence(),
+      PRESENCE_HEARTBEAT_MS,
+    );
+    const sweep = setInterval(
+      () => void this.sweepPresence(),
+      PRESENCE_SWEEP_MS,
+    );
+    heartbeat.unref();
+    sweep.unref();
+    this.presenceTimers = [heartbeat, sweep];
+  }
+
+  onModuleDestroy() {
+    this.presenceTimers.forEach(clearInterval);
+    this.presenceTimers = [];
+  }
+
+  async refreshPresence() {
+    const entries: PresenceEntry[] = [];
+    for (const socket of this.server.sockets.sockets.values()) {
+      const userId = socket.data?.user?.sub;
+      if (userId) entries.push({ userId: String(userId), socketId: socket.id });
+    }
+    if (entries.length === 0) return;
+    try {
+      const cameOnline = await this.presenceService.heartbeat(entries);
+      cameOnline.forEach((userId) => this.emitStatus(userId, 'online'));
+    } catch (err) {
+      this.presenceService.logError(err);
+    }
+  }
+
+  async sweepPresence() {
+    try {
+      const wentOffline = await this.presenceService.sweepStale();
+      wentOffline.forEach((userId) => this.emitStatus(userId, 'offline'));
+    } catch (err) {
+      this.presenceService.logError(err);
+    }
+  }
+
+  private emitStatus(userId: string, status: 'online' | 'offline') {
+    this.server.emit('userStatusChanged', { userId, status });
+  }
 
   async handleConnection(client: Socket) {
     try {
@@ -91,33 +151,28 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         `Socket client connected: ${client.id} (user: ${payload.sub})`,
       );
 
-      // Register connection for presence tracking
-      const becameOnline = await this.presenceService.addConnection(
-        payload.sub,
-        client.id,
-      );
-
-      // Send current online users list to connecting client
-      const onlineUsers = await this.presenceService.getOnlineUsers();
-      client.emit('onlineUsers', onlineUsers);
-
       const instanceId =
         process.env.INSTANCE_ID || `gateway-${process.env.PORT || 8008}`;
       client.emit('gatewayConnected', { instanceId });
-
-      // Broadcast status change if user just became online
-      if (becameOnline) {
-        this.server.emit('userStatusChanged', {
-          userId: payload.sub,
-          status: 'online',
-        });
-      }
     } catch (err: any) {
       this.logger.warn(
         `Socket connection token verification failed (${client.id}): ${err.message}`,
       );
       client.emit('auth_error', { message: 'Invalid or expired token' });
       client.disconnect(true);
+      return;
+    }
+
+    try {
+      const userId = String(client.data.user.sub);
+      const becameOnline = await this.presenceService.addConnection(
+        userId,
+        client.id,
+      );
+      client.emit('onlineUsers', await this.presenceService.getOnlineUsers());
+      if (becameOnline) this.emitStatus(userId, 'online');
+    } catch (err) {
+      this.presenceService.logError(err);
     }
   }
 
@@ -125,17 +180,15 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.logger.log(`Socket client disconnected: ${client.id}`);
 
     const userId = client.data?.user?.sub ?? (client as any).user?.userId;
-    if (userId) {
+    if (!userId) return;
+    try {
       const becameOffline = await this.presenceService.removeConnection(
-        userId,
+        String(userId),
         client.id,
       );
-      if (becameOffline) {
-        this.server.emit('userStatusChanged', {
-          userId,
-          status: 'offline',
-        });
-      }
+      if (becameOffline) this.emitStatus(String(userId), 'offline');
+    } catch (err) {
+      this.presenceService.logError(err);
     }
   }
 

@@ -31,5 +31,8 @@ export const MessageSchema = messageSchema;
 messageSchema.index({ conversationId: 1, createdAt: -1 });
 messageSchema.index(
   { conversationId: 1, clientMessageId: 1 },
-  { sparse: true, unique: true },
+  {
+    unique: true,
+    partialFilterExpression: { clientMessageId: { $type: 'string' } },
+  },
 );

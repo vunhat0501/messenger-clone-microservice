@@ -15,7 +15,14 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@workspace/ui/components/dialog';
-import { Plus, Search, MessageSquare, Circle, Server } from 'lucide-react';
+import {
+  Plus,
+  Search,
+  MessageSquare,
+  Circle,
+  Server,
+  RefreshCw,
+} from 'lucide-react';
 import {
   ConversationItem,
   Participant,
@@ -42,6 +49,8 @@ interface ChatSidebarProps {
   currentUserName?: string;
   onlineUserIds?: string[];
   activeInstanceId?: string;
+  conversationsError?: boolean;
+  onRetryLoadConversations?: () => void;
 }
 
 export function ChatSidebar({
@@ -63,6 +72,8 @@ export function ChatSidebar({
   currentUserName,
   onlineUserIds = [],
   activeInstanceId,
+  conversationsError = false,
+  onRetryLoadConversations,
 }: ChatSidebarProps) {
   const getOtherParticipant = (conv: ConversationItem): Participant => {
     if (conv.participants && conv.participants.length > 0) {
@@ -206,9 +217,26 @@ export function ChatSidebar({
       {/* Conversation list */}
       <div className="flex-1 overflow-y-auto p-2 space-y-1">
         {filteredConversations.length === 0 ? (
-          <div className="p-6 text-center text-sm text-muted-foreground">
-            No conversations yet. Start one!
-          </div>
+          conversationsError && conversations.length === 0 ? (
+            <div
+              role="alert"
+              className="m-2 flex flex-col items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-center text-sm text-foreground"
+            >
+              <p>Could not load your conversations.</p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onRetryLoadConversations}
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Try again
+              </Button>
+            </div>
+          ) : (
+            <div className="p-6 text-center text-sm text-muted-foreground">
+              No conversations yet. Start one!
+            </div>
+          )
         ) : (
           filteredConversations.map((conv) => {
             const other = getOtherParticipant(conv);

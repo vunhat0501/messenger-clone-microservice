@@ -54,6 +54,14 @@ export const envSchema = z.object({
   MONGO_USER: z.string().default('admin'),
   MONGO_PASS: z.string().default('password'),
   MONGO_REPLICA_SET: z.string().trim().min(1).optional(),
+  MONGO_HOST_MAP: z
+    .string()
+    .trim()
+    .regex(
+      /^[\w.-]+=[\w.:-]+(?:\s*,\s*[\w.-]+=[\w.:-]+)*$/,
+      'MONGO_HOST_MAP must look like name=address,name=address',
+    )
+    .optional(),
   MONGO_READ_PREFERENCE: z
     .enum([
       'primary',

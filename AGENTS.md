@@ -65,7 +65,7 @@ Use Node.js 20 or later and pnpm 10.4.1, as declared in the root `package.json`.
 
 - Backend environment validation lives in `apps/api/apps/api/src/config/env.config.ts`. It loads the root `.env` relative to the backend working directory (`apps/api`); use the package commands to preserve that working directory.
 - Required backend connection variables include `DATABASE_URL`, `MONGO_URI`, `RABBITMQ_URL`, and `REDIS_URL`. JWT and refresh-token settings are defined in the same validator.
-- Frontend environment validation lives in `apps/web/config/env.config.ts`. `NEXT_PUBLIC_BACKEND_URL` defaults to `http://localhost:8008`.
+- Frontend environment validation lives in `apps/web/config/env.config.ts`. `NEXT_PUBLIC_BACKEND_URL` defaults to the Nginx load balancer, `http://localhost:80`, so the BFF keeps working when a single gateway is down; point it at `http://localhost:8008` to bypass Nginx.
 - Keep secrets out of source, logs, test fixtures, and responses. Only expose browser-safe values through `NEXT_PUBLIC_*` variables.
 - Use the Compose service names `postgres`, `mongo`, `rabbitmq`, `redis`, and `nginx` when managing local infrastructure. Check whether a service is already running before starting another instance.
 - Do not drop schemas, remove persistent volumes, or reset databases as a routine troubleshooting step. Confirm the intended database and data impact before destructive operations.

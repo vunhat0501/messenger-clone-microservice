@@ -1,20 +1,41 @@
-import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { createClient, RedisClientType } from 'redis';
 import { env } from 'apps/api/src/config/env.config';
+
+export const PRESENCE_HEARTBEAT_MS = 10_000;
+export const PRESENCE_SWEEP_MS = 15_000;
+export const PRESENCE_STALE_MS = 30_000;
+
+export interface PresenceEntry {
+  userId: string;
+  socketId: string;
+}
 
 @Injectable()
 export class PresenceService implements OnModuleInit, OnModuleDestroy {
   private client: RedisClientType;
+  private readonly logger = new Logger(PresenceService.name);
+  private lastErrorLoggedAt = 0;
 
   private readonly ONLINE_SET_KEY = 'presence:online_users';
-  private readonly USER_SOCKETS_PREFIX = 'presence:user_sockets:';
+  private readonly USER_SOCKETS_PREFIX = 'presence:sockets:';
 
   async onModuleInit() {
-    this.client = createClient({ url: env.REDIS_URL });
-    this.client.on('error', (err) => {
-      console.error('PresenceService Redis Client Error:', err);
+    this.client = createClient({
+      url: env.REDIS_URL,
+      disableOfflineQueue: true,
     });
-    await this.client.connect();
+    this.client.on('error', (err) => this.logError(err));
+    try {
+      await this.client.connect();
+    } catch (err) {
+      this.logError(err);
+    }
   }
 
   async onModuleDestroy() {
@@ -23,33 +44,72 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /**
-   * * Registers a connected socket for a user.
-   * * Returns true if this is the user's first active connection (offline -> online transition).
-   */
-  async addConnection(userId: string, socketId: string): Promise<boolean> {
-    const socketSetKey = `${this.USER_SOCKETS_PREFIX}${userId}`;
-    const added = await this.client.sAdd(socketSetKey, socketId);
-    await this.client.sAdd(this.ONLINE_SET_KEY, userId);
+  logError(err: unknown): void {
+    const now = Date.now();
+    if (now - this.lastErrorLoggedAt < 10_000) return;
+    this.lastErrorLoggedAt = now;
+    const message = err instanceof Error ? err.message : String(err);
+    this.logger.warn(
+      `Presence unavailable, online status may be stale: ${message}`,
+    );
+  }
 
-    const count = await this.client.sCard(socketSetKey);
-    return count === 1;
+  private socketsKey(userId: string): string {
+    return `${this.USER_SOCKETS_PREFIX}${userId}`;
   }
 
   /**
-   * * Unregisters a disconnected socket for a user.
-   * * Returns true if the user has no remaining active connections (online -> offline transition).
+   */
+  async addConnection(userId: string, socketId: string): Promise<boolean> {
+    const now = Date.now();
+    const key = this.socketsKey(userId);
+    await this.client.zAdd(key, { score: now, value: socketId });
+    await this.client.zRemRangeByScore(key, '-inf', now - PRESENCE_STALE_MS);
+    const added = await this.client.sAdd(this.ONLINE_SET_KEY, userId);
+    return Number(added) === 1;
+  }
+
+  /**
    */
   async removeConnection(userId: string, socketId: string): Promise<boolean> {
-    const socketSetKey = `${this.USER_SOCKETS_PREFIX}${userId}`;
-    await this.client.sRem(socketSetKey, socketId);
+    const key = this.socketsKey(userId);
+    await this.client.zRem(key, socketId);
+    return this.markOfflineIfNoSockets(userId);
+  }
 
-    const remaining = await this.client.sCard(socketSetKey);
-    if (remaining === 0) {
-      await this.client.sRem(this.ONLINE_SET_KEY, userId);
-      return true;
+  async heartbeat(entries: PresenceEntry[]): Promise<string[]> {
+    const now = Date.now();
+    const cameOnline: string[] = [];
+    for (const { userId, socketId } of entries) {
+      await this.client.zAdd(this.socketsKey(userId), {
+        score: now,
+        value: socketId,
+      });
+      const added = await this.client.sAdd(this.ONLINE_SET_KEY, userId);
+      if (Number(added) === 1) cameOnline.push(userId);
     }
-    return false;
+    return cameOnline;
+  }
+
+  async sweepStale(): Promise<string[]> {
+    const users = await this.client.sMembers(this.ONLINE_SET_KEY);
+    const wentOffline: string[] = [];
+    for (const userId of users) {
+      await this.client.zRemRangeByScore(
+        this.socketsKey(userId),
+        '-inf',
+        Date.now() - PRESENCE_STALE_MS,
+      );
+      if (await this.markOfflineIfNoSockets(userId)) wentOffline.push(userId);
+    }
+    return wentOffline;
+  }
+
+  private async markOfflineIfNoSockets(userId: string): Promise<boolean> {
+    const remaining = await this.client.zCard(this.socketsKey(userId));
+    if (Number(remaining) > 0) return false;
+    const removed = await this.client.sRem(this.ONLINE_SET_KEY, userId);
+    return Number(removed) === 1;
   }
 
   async getOnlineUsers(): Promise<string[]> {

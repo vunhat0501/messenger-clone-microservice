@@ -226,10 +226,13 @@ export class ChatServiceService {
       throw new RpcException('Conversation not found or access denied');
     }
 
+    const useCache = limit === 100;
     const cacheKey = CACHE_KEYS.conversationMessages(conversationId, limit);
-    const cachedMessages = await this.cacheManager.get<Message[]>(cacheKey);
-    if (cachedMessages) {
-      return cachedMessages;
+    if (useCache) {
+      const cachedMessages = await this.cacheManager.get<Message[]>(cacheKey);
+      if (cachedMessages) {
+        return cachedMessages;
+      }
     }
 
     const messages = await this.messageModel
@@ -244,7 +247,9 @@ export class ChatServiceService {
 
     messages.reverse();
 
-    await this.cacheManager.set(cacheKey, messages, CACHE_TTL.MESSAGES);
+    if (useCache) {
+      await this.cacheManager.set(cacheKey, messages, CACHE_TTL.MESSAGES);
+    }
     return messages;
   }
 
@@ -258,16 +263,6 @@ export class ChatServiceService {
       throw new RpcException('Invalid conversation ID');
     }
 
-    if (payload.clientMessageId) {
-      const existingMessage = await this.messageModel.findOne({
-        conversationId: new Types.ObjectId(payload.conversationId),
-        clientMessageId: payload.clientMessageId,
-      });
-      if (existingMessage) {
-        return existingMessage;
-      }
-    }
-
     const conv = await this.conversationModel.findOne({
       _id: new Types.ObjectId(payload.conversationId),
       'participants.userId': payload.senderId,
@@ -278,15 +273,39 @@ export class ChatServiceService {
       );
     }
 
-    const message = await this.messageModel.create({
-      conversationId: new Types.ObjectId(payload.conversationId),
-      senderId: payload.senderId,
-      text: payload.text,
-      readBy: [payload.senderId],
-      ...(payload.clientMessageId
-        ? { clientMessageId: payload.clientMessageId }
-        : {}),
-    });
+    const sameMessage = payload.clientMessageId
+      ? {
+          conversationId: new Types.ObjectId(payload.conversationId),
+          clientMessageId: payload.clientMessageId,
+        }
+      : null;
+    if (sameMessage) {
+      const existingMessage = await this.messageModel.findOne(sameMessage);
+      if (existingMessage) {
+        return existingMessage;
+      }
+    }
+
+    let message: MessageDocument;
+    try {
+      message = await this.messageModel.create({
+        conversationId: new Types.ObjectId(payload.conversationId),
+        senderId: payload.senderId,
+        text: payload.text,
+        readBy: [payload.senderId],
+        ...(payload.clientMessageId
+          ? { clientMessageId: payload.clientMessageId }
+          : {}),
+      });
+    } catch (error) {
+      if (sameMessage && (error as { code?: number }).code === 11000) {
+        const existingMessage = await this.messageModel.findOne(sameMessage);
+        if (existingMessage) {
+          return existingMessage;
+        }
+      }
+      throw error;
+    }
 
     await this.conversationModel.findByIdAndUpdate(payload.conversationId, {
       lastMessageAt: new Date(),
