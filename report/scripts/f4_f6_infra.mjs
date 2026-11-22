@@ -9,6 +9,10 @@ const FAULTS = {
   rabbitmq: { kill: 'docker kill app_rabbitmq', start: 'docker start app_rabbitmq', downMs: 12000 },
   redis: { kill: 'docker kill app_redis', start: 'docker start app_redis', downMs: 12000 },
   mongo: { kill: 'docker kill chat_mongo', start: 'docker start chat_mongo', downMs: 15000 },
+  // Network partition: the container keeps running but is cut off from the Compose network.
+  'rabbitmq-net': { kill: 'docker network disconnect messenger-clone-microservice_default app_rabbitmq', start: 'docker network connect --alias rabbitmq messenger-clone-microservice_default app_rabbitmq', downMs: 12000 },
+  'redis-net': { kill: 'docker network disconnect messenger-clone-microservice_default app_redis', start: 'docker network connect --alias redis messenger-clone-microservice_default app_redis', downMs: 12000 },
+  'mongo-net': { kill: 'docker network disconnect messenger-clone-microservice_default chat_mongo', start: 'docker network connect --alias mongo_primary messenger-clone-microservice_default chat_mongo', downMs: 30000 },
 };
 const F = FAULTS[which];
 if (F && process.argv[3]) F.downMs = Number(process.argv[3]); // optional: outage length in ms
@@ -46,7 +50,7 @@ const loop = (async () => { while (!endProbe) { const t = Date.now() - T0; const
 
 await sleep(3500);
 await sh(F.kill); stopAt = Date.now() - T0;
-if (which === 'mongo') {
+if (which.startsWith('mongo')) {
   (async () => {
     for (let i = 0; i < 30 && electionMs === null; i++) {
       try {

@@ -40,3 +40,7 @@ npm-debug.log*
 
 # Local output of the failure-demo scripts
 report/scripts/*.log
+
+# Local control logs of the measurement scripts
+report/ket-qua/*_driver.log
+report/ket-qua/p2_extra_chat.log
