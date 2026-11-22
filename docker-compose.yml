@@ -10,16 +10,17 @@ services:
             POSTGRES_DB: ${DB_NAME}
             PG_REPL_USER: ${PG_REPL_USER:-replicator}
             PG_REPL_PASSWORD: ${PG_REPL_PASSWORD:?Set PG_REPL_PASSWORD in .env}
-            PG_REPLICA_1_HOST: postgres_replica
-            PG_REPLICA_2_HOST: postgres_replica_2
+            PG_NODE_NAME: postgres_primary
+            PG_REPL_SLOT: auth_primary
+            PG_BOOTSTRAP_PRIMARY: 'true'
             PG_PORT: 5432
-        entrypoint: ['bash', '/scripts/postgres-primary.sh']
+        entrypoint: ['bash', '/scripts/postgres-node.sh']
         ports:
             - 5432:5432
         volumes:
             - postgres_data:/var/lib/postgresql
             - ./scripts/postgres-init-repl.sh:/docker-entrypoint-initdb.d/postgres-init-repl.sh:ro
-            - ./scripts/postgres-primary.sh:/scripts/postgres-primary.sh:ro
+            - ./scripts/postgres-node.sh:/scripts/postgres-node.sh:ro
         healthcheck:
             test:
                 [
@@ -39,15 +40,15 @@ services:
             POSTGRES_DB: ${DB_NAME}
             PG_REPL_USER: ${PG_REPL_USER:-replicator}
             PG_REPL_PASSWORD: ${PG_REPL_PASSWORD:?Set PG_REPL_PASSWORD in .env}
+            PG_NODE_NAME: postgres_replica
             PG_REPL_SLOT: auth_replica
-            PG_PRIMARY_HOST: postgres_primary
-            PG_PRIMARY_PORT: 5432
-        entrypoint: ['bash', '/scripts/postgres-standby.sh']
+            PG_PORT: 5432
+        entrypoint: ['bash', '/scripts/postgres-node.sh']
         ports:
             - 5433:5432
         volumes:
             - postgres_replica_data:/var/lib/postgresql
-            - ./scripts/postgres-standby.sh:/scripts/postgres-standby.sh:ro
+            - ./scripts/postgres-node.sh:/scripts/postgres-node.sh:ro
         depends_on:
             postgres_primary:
                 condition: service_healthy
@@ -55,7 +56,7 @@ services:
             test:
                 [
                     'CMD-SHELL',
-                    'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -tAc "SELECT pg_is_in_recovery()" | grep -qx t',
+                    'pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"',
                 ]
             interval: 5s
             timeout: 5s
@@ -70,15 +71,15 @@ services:
             POSTGRES_DB: ${DB_NAME}
             PG_REPL_USER: ${PG_REPL_USER:-replicator}
             PG_REPL_PASSWORD: ${PG_REPL_PASSWORD:?Set PG_REPL_PASSWORD in .env}
+            PG_NODE_NAME: postgres_replica_2
             PG_REPL_SLOT: auth_replica_2
-            PG_PRIMARY_HOST: postgres_primary
-            PG_PRIMARY_PORT: 5432
-        entrypoint: ['bash', '/scripts/postgres-standby.sh']
+            PG_PORT: 5432
+        entrypoint: ['bash', '/scripts/postgres-node.sh']
         ports:
             - 5434:5432
         volumes:
             - postgres_replica_2_data:/var/lib/postgresql
-            - ./scripts/postgres-standby.sh:/scripts/postgres-standby.sh:ro
+            - ./scripts/postgres-node.sh:/scripts/postgres-node.sh:ro
         depends_on:
             postgres_primary:
                 condition: service_healthy
@@ -86,7 +87,7 @@ services:
             test:
                 [
                     'CMD-SHELL',
-                    'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -tAc "SELECT pg_is_in_recovery()" | grep -qx t',
+                    'pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"',
                 ]
             interval: 5s
             timeout: 5s
@@ -100,6 +101,8 @@ services:
             POSTGRES_PASSWORD: ${DB_PASS}
             PGPASSWORD: ${DB_PASS}
             POSTGRES_DB: ${DB_NAME}
+            PG_REPL_USER: ${PG_REPL_USER:-replicator}
+            PG_REPL_PASSWORD: ${PG_REPL_PASSWORD:?Set PG_REPL_PASSWORD in .env}
             PRIMARY_HOST: postgres_primary
             PRIMARY_PORT: 5432
             REPLICA_1_HOST: postgres_replica
