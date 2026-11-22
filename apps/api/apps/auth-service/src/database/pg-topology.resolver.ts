@@ -9,26 +9,33 @@ export interface PostgresTopology {
 
 const logger = new Logger('PgTopologyResolver');
 
+interface NodeState {
+  /** false: read-write PRIMARY, true: read-only STANDBY. */
+  isInRecovery: boolean;
+  /** Timeline of the last checkpoint; a promotion starts a higher one. */
+  timeline: number;
+}
+
 /**
- * Checks whether a PostgreSQL connection endpoint is in recovery (standby).
- * Returns:
- *   - false: Node is an active read-write PRIMARY
- *   - true: Node is a read-only STANDBY
- *   - null: Node is unreachable or error occurred
+ * Asks a PostgreSQL endpoint whether it is in recovery and which timeline it is on.
+ * Returns null when the node is unreachable or the query fails.
  */
-async function checkNodeRecovery(connectionString: string): Promise<boolean | null> {
+async function checkNode(connectionString: string): Promise<NodeState | null> {
   const client = new Client({
     connectionString,
     connectionTimeoutMillis: 2500,
+    query_timeout: 2500,
   });
 
   try {
     await client.connect();
-    const res = await client.query<{ is_in_recovery: boolean }>(
-      'SELECT pg_is_in_recovery() AS is_in_recovery;',
+    const res = await client.query<{ is_in_recovery: boolean; timeline: number | null }>(
+      'SELECT pg_is_in_recovery() AS is_in_recovery, (SELECT timeline_id FROM pg_control_checkpoint()) AS timeline;',
     );
     await client.end();
-    return res.rows[0]?.is_in_recovery ?? null;
+    const row = res.rows[0];
+    if (!row) return null;
+    return { isInRecovery: row.is_in_recovery, timeline: Number(row.timeline ?? 0) };
   } catch (err: any) {
     logger.warn(`Failed to connect or query node [${connectionString}]: ${err.message}`);
     try {
@@ -42,7 +49,9 @@ async function checkNodeRecovery(connectionString: string): Promise<boolean | nu
  * Dynamically resolves the active master and slave nodes from candidate URLs.
  * If candidate nodes have been promoted/demoted, it identifies the live primary
  * (pg_is_in_recovery() = false) for writes, and assigns all remaining standby
- * nodes for reads.
+ * nodes for reads. When an old primary comes back still read-write next to a
+ * promoted one (split brain), the node on the highest timeline wins and the stale
+ * one is left out entirely: its writes would be discarded when it is fenced.
  */
 export async function resolvePostgresTopology(
   candidateUrls: (string | undefined)[],
@@ -58,20 +67,29 @@ export async function resolvePostgresTopology(
   let masterUrl: string | null = null;
   let primaryDetected = true;
   const slaveUrls: string[] = [];
+  const primaries: { url: string; timeline: number }[] = [];
 
-  for (const url of validUrls) {
-    const isRecovery = await checkNodeRecovery(url);
-    if (isRecovery === false) {
-      if (!masterUrl) {
-        masterUrl = url;
-        logger.log(`Active PRIMARY detected: ${url}`);
-      } else {
-        logger.warn(`Multiple primaries detected! Keeping ${masterUrl}, adding ${url} as slave`);
-        slaveUrls.push(url);
-      }
-    } else if (isRecovery === true) {
+  const states = await Promise.all(validUrls.map((url) => checkNode(url)));
+  validUrls.forEach((url, i) => {
+    const state = states[i];
+    if (!state) return;
+    if (state.isInRecovery) {
       logger.log(`Active STANDBY detected: ${url}`);
       slaveUrls.push(url);
+    } else {
+      primaries.push({ url, timeline: state.timeline });
+    }
+  });
+
+  if (primaries.length > 0) {
+    // Stable sort: candidate order breaks ties.
+    const winner = [...primaries].sort((a, b) => b.timeline - a.timeline)[0]!;
+    masterUrl = winner.url;
+    logger.log(`Active PRIMARY detected: ${winner.url} (timeline ${winner.timeline})`);
+    for (const stale of primaries.filter((p) => p !== winner)) {
+      logger.warn(
+        `Multiple primaries detected! Ignoring ${stale.url} (timeline ${stale.timeline}) in favour of ${winner.url}`,
+      );
     }
   }
 

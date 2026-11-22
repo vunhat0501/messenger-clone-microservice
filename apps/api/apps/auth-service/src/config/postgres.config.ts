@@ -27,6 +27,14 @@ export default registerAs(
             },
           }
         : { url: topology.masterUrl }),
+      // Bound how long a query can hang on a primary that vanished without closing
+      // its sockets (network partition). Without this, the topology watcher's
+      // destroy() waits for those queries and writes stay down for about a minute.
+      extra: {
+        connectionTimeoutMillis: 3_000,
+        query_timeout: 10_000,
+        keepAlive: true,
+      },
       entities: [],
 
       //! DO NOT set to true in production
