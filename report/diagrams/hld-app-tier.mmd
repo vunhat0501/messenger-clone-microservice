@@ -1,0 +1,48 @@
+flowchart TB
+  classDef client fill:#f9f9f9,stroke:#333,stroke-width:2px,color:black;
+  classDef edge fill:#e1e1e1,stroke:#333,stroke-width:2px,color:black;
+  classDef gateway fill:#d4e6f1,stroke:#333,stroke-width:2px,color:black;
+  classDef broker fill:#fcf3cf,stroke:#333,stroke-width:2px,color:black;
+  classDef service fill:#f2d7d5,stroke:#333,stroke-width:2px,color:black;
+  classDef cache fill:#fdebd0,stroke:#333,stroke-width:2px,color:black;
+  classDef db fill:#d5f5e3,stroke:#333,stroke-width:2px,color:black;
+
+  Client(["Client Application<br/>Next.js 16 / React 19<br/>(BFF + Socket.IO client)"]):::client
+
+  subgraph Edge ["Edge / Entry Tier"]
+    LB{"Nginx :80 / :8080<br/>least_conn"}:::edge
+  end
+
+  subgraph Gateways ["Gateway Tier (Scaled Instances)"]
+    direction LR
+    GW1["API Gateway 1 (:8008)<br/>NestJS HTTP + Socket.IO"]:::gateway
+    GW2["API Gateway 2 (:8009)<br/>NestJS HTTP + Socket.IO"]:::gateway
+  end
+
+  subgraph Infrastructure ["Shared Infrastructure"]
+    direction LR
+    PubSub[("Redis (:6379)<br/>Socket.IO adapter,<br/>presence, cache")]:::cache
+    Broker[["RabbitMQ (:5672)<br/>RPC queues"]]:::broker
+  end
+
+  subgraph Services ["Microservices Tier"]
+    direction LR
+    AuthSvc["Auth Service<br/>Identity, Users"]:::service
+    ChatSvc["Chat Service<br/>Conversations, Messages"]:::service
+  end
+
+  Data[("Database Tier<br/>(next figure)")]:::db
+
+  Client -->|"HTTP / WebSockets"| LB
+  LB --> GW1
+  LB --> GW2
+  GW1 <-->|"State sync, presence"| PubSub
+  GW2 <-->|"State sync, presence"| PubSub
+  GW1 <-->|"RPC"| Broker
+  GW2 <-->|"RPC"| Broker
+  Broker <-->|"auth_queue"| AuthSvc
+  Broker <-->|"chat_queue"| ChatSvc
+  AuthSvc <-.->|"Cache-aside"| PubSub
+  ChatSvc <-.->|"Cache-aside"| PubSub
+  AuthSvc --> Data
+  ChatSvc --> Data

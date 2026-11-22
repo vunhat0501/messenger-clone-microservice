@@ -1,0 +1,34 @@
+sequenceDiagram
+    autonumber
+    actor User as User Device
+    participant GW as Gateway
+    participant Redis as Redis
+    participant Others as Other Gateways
+    actor Peers as Other Users
+
+    Note over GW: User connects (first tab)
+    User->>GW: WebSocket handshake with JWT cookie
+    GW->>Redis: ZADD presence:sockets:userId (score now)
+    GW->>Redis: SADD presence:online_users userId
+    Redis-->>GW: 1 = user came online
+    GW->>Others: userStatusChanged online
+    Others-->>Peers: Green dot
+
+    Note over GW,Redis: While connected
+    loop every 10 s
+        GW->>Redis: Heartbeat: ZADD score = now
+    end
+    loop every 15 s on every gateway
+        GW->>Redis: Drop sockets older than 30 s, SREM if none left
+    end
+
+    Note over GW: A tab closes
+    User->>GW: Disconnect
+    GW->>Redis: ZREM presence:sockets:userId
+    alt Other tab still connected
+        Redis-->>GW: ZCARD above 0, stays online
+    else Last socket removed
+        GW->>Redis: SREM presence:online_users
+        GW->>Others: userStatusChanged offline
+        Others-->>Peers: Grey dot
+    end

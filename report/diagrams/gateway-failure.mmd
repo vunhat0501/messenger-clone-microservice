@@ -1,0 +1,27 @@
+sequenceDiagram
+    autonumber
+    actor Alice as Alice
+    participant Nginx as Nginx
+    participant GWA as Gateway A
+    participant GWB as Gateway B
+    participant Redis as Redis
+    actor Bob as Bob (on B)
+
+    Alice->>Nginx: Socket.IO (WebSocket)
+    Nginx->>GWA: least_conn picks Gateway A
+    GWA->>Redis: Presence heartbeat every 10 s
+
+    Note over GWA: Gateway A is killed
+    GWA--xAlice: Socket closes
+    Alice->>Nginx: Socket.IO reconnects by itself
+    Nginx->>GWB: Routed to the surviving gateway
+    GWB->>Redis: Verify cookie, register socket
+    GWB-->>Alice: gatewayConnected, onlineUsers
+    Alice->>GWB: joinConversation, then sendMessage<br/>(same clientMessageId on retry)
+    GWB-->>Bob: newMessage
+
+    opt Alice does not reconnect
+        Note over Redis: Old socket entry stale after 30 s
+        GWB->>Redis: Sweep every 15 s removes it
+        GWB-->>Bob: userStatusChanged offline (31 to 40 s)
+    end

@@ -1,0 +1,28 @@
+sequenceDiagram
+    autonumber
+    actor Alice as Alice (Client A on GW1 :8008)
+    participant GW1 as API Gateway 1 (:8008)
+    participant Rabbit as RabbitMQ (chat_queue)
+    participant Chat as Chat Microservice
+    participant Mongo as MongoDB Primary (rs0)
+    participant Redis as Redis (adapter and cache)
+    participant GW2 as API Gateway 2 (:8009)
+    actor Bob as Bob (Client B on GW2 :8009)
+
+    Alice->>GW1: WS sendMessage { conversationId, text, clientMessageId }
+    Note over GW1: Sender id comes from the authenticated socket, not from the payload
+    GW1->>Rabbit: RPC save_message (timeout 10 s)
+    Rabbit->>Chat: Consume save_message
+    Chat->>Mongo: Look up clientMessageId, insert message, update conversation (w: majority)
+    Mongo-->>Chat: Saved message (the existing one if the id was already stored)
+    Chat->>Redis: Invalidate message and conversation caches
+    Chat-->>GW1: savedMessage (via RabbitMQ)
+    GW1->>Redis: Redis adapter publishes newMessage to the room
+    Redis-->>GW2: Cross-gateway broadcast
+    GW2-->>Bob: newMessage (delivered in real time)
+    GW1-->>Alice: Ack with savedMessage, plus newMessage and conversationUpdated
+
+    opt No answer within 10 s
+        GW1-->>Alice: Ack error "Message service timeout"
+        Note over Alice: UI shows Not sent, Retry reuses the same clientMessageId
+    end

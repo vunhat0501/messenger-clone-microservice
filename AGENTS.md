@@ -85,7 +85,7 @@ Use Node.js 20 or later and pnpm 10.4.1, as declared in the root `package.json`.
 ## Database changes
 
 - PostgreSQL entities are in `apps/api/apps/auth-service/src/auth/entities` and `apps/api/apps/auth-service/src/user/entities`. MongoDB schemas are in `apps/api/apps/chat-service/src/database/schemas`.
-- `users.id` is a numeric PostgreSQL ID. MongoDB conversation and message `_id` values are ObjectIds. Keep these distinct when validating, serializing, and querying data.
+- `users.id` is a PostgreSQL UUID (also stored as a string in MongoDB `participants.userId`, `messages.senderId` and `readBy`). MongoDB conversation and message `_id` values are ObjectIds. Keep these distinct when validating, serializing, and querying data.
 - `participants` is an embedded array in conversations with `_id: false`, not a standalone collection. User IDs stored in MongoDB are logical references across services, not enforced PostgreSQL foreign keys.
 - Account deletion uses `users.deleted_at` for soft deletion. `auth.user_id` has a cascade on physical deletion; do not assume it also runs for soft deletion or removes MongoDB data.
 - Preserve indexes, uniqueness, nullability, defaults, and existing naming mappings when changing entities or schemas. Consider existing records before introducing required fields or unique indexes.

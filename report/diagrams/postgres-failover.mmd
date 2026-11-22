@@ -1,0 +1,29 @@
+sequenceDiagram
+    autonumber
+    participant Old as Old Primary
+    participant Sentinel as postgres_sentinel
+    participant StdB as Standby B
+    participant StdA as Standby A<br/>(most WAL)
+    participant Auth as auth-service
+    actor Client as Web Browser
+
+    Note over Old: Primary stops
+    loop every 5 s, 3 failed rounds
+        Sentinel-xOld: pg_is_in_recovery()
+    end
+    Sentinel->>StdA: Still streaming? (second opinion)
+    StdA-->>Sentinel: No, primary is gone
+    Sentinel->>StdA: pg_promote()
+    StdA-->>Sentinel: Now PRIMARY (new timeline)
+    Sentinel->>StdB: Create slot, repoint, reload
+    StdB->>StdA: Streaming resumes
+    Auth->>StdA: Topology check finds new primary
+    Client->>Auth: Sign-in works again (23 to 26 s)
+
+    Note over Old: Old primary comes back
+    alt Container restart
+        Old->>StdA: Newer timeline: discard data, pg_basebackup
+    else Network partition (still writable)
+        Sentinel->>Old: Two primaries: shut stale one down
+        Old->>StdA: Restarts and re-clones as standby
+    end

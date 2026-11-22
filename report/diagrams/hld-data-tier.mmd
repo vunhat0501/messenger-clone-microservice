@@ -1,0 +1,33 @@
+flowchart TB
+  classDef edge fill:#e1e1e1,stroke:#333,stroke-width:2px,color:black;
+  classDef service fill:#f2d7d5,stroke:#333,stroke-width:2px,color:black;
+  classDef db fill:#d5f5e3,stroke:#333,stroke-width:2px,color:black;
+
+  AuthSvc["Auth Service<br/>(TypeORM)"]:::service
+  ChatSvc["Chat Service<br/>(Mongoose)"]:::service
+
+  subgraph RelationalDB ["PostgreSQL Cluster (1 Primary + 2 Standbys)"]
+    direction TB
+    Sentinel["postgres_sentinel<br/>failover, repointing, fencing"]:::edge
+    SQL_Pri[("postgres_primary :5432<br/>Primary at start-up<br/>(the role moves after a failover)")]:::db
+    SQL_Rep[("postgres_replica :5433<br/>Standby at start-up")]:::db
+    SQL_Rep2[("postgres_replica_2 :5434<br/>Standby at start-up")]:::db
+  end
+
+  subgraph DocumentDB ["MongoDB Replica Set rs0 (3 Members)"]
+    direction TB
+    NoSQL_Pri[("mongo_primary :27017<br/>Primary, priority 2")]:::db
+    NoSQL_Rep[("mongo_replica :27018<br/>Secondary, priority 1")]:::db
+    NoSQL_Rep2[("mongo_replica_2 :27019<br/>Secondary, priority 1")]:::db
+  end
+
+  AuthSvc -->|"Writes and primary reads<br/>(follows the Primary)"| SQL_Pri
+  AuthSvc -.->|"Directory reads"| SQL_Rep
+  SQL_Pri -.->|"Streaming replication"| SQL_Rep
+  SQL_Pri -.->|"Streaming replication"| SQL_Rep2
+  Sentinel -.->|"Health checks every 5 s,<br/>promote, repoint, fence"| SQL_Pri
+
+  ChatSvc -->|"Writes (w: majority)"| NoSQL_Pri
+  ChatSvc -.->|"Optional reads<br/>(MONGO_READ_PREFERENCE, default primary)"| NoSQL_Rep
+  NoSQL_Pri -.->|"Oplog, heartbeats, elections"| NoSQL_Rep
+  NoSQL_Pri -.->|"Oplog, heartbeats, elections"| NoSQL_Rep2

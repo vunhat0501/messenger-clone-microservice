@@ -12,6 +12,10 @@ The architecture is not a monolithic application; it is a **multi-tier, loosely-
 
 ## 2. Distributed Architecture Overview
 
+The architecture is shown in two figures for readability: the application tier first, then the data tier. In the data tier the PostgreSQL primary role is not fixed to one node: after a failover any of the three nodes can be the primary (see Workflow 5).
+
+### Application Tier
+
 ```mermaid
 flowchart TB
   classDef client fill:#f9f9f9,stroke:#333,stroke-width:2px,color:black;
@@ -22,203 +26,321 @@ flowchart TB
   classDef cache fill:#fdebd0,stroke:#333,stroke-width:2px,color:black;
   classDef db fill:#d5f5e3,stroke:#333,stroke-width:2px,color:black;
 
-  Client(["Client Application - Next.js 16 / React 19"]):::client
+  Client(["Client Application<br/>Next.js 16 / React 19<br/>(BFF + Socket.IO client)"]):::client
 
   subgraph Edge ["Edge / Entry Tier"]
-    LB{"Nginx Load Balancer - :80 / :8080"}:::edge
+    LB{"Nginx :80 / :8080<br/>least_conn"}:::edge
   end
 
   subgraph Gateways ["Gateway Tier (Scaled Instances)"]
     direction LR
-    GW1["API Gateway Instance 1 (:8008)<br/>(NestJS HTTP + Socket.IO)"]:::gateway
-    GW2["API Gateway Instance 2 (:8009)<br/>(NestJS HTTP + Socket.IO)"]:::gateway
+    GW1["API Gateway 1 (:8008)<br/>NestJS HTTP + Socket.IO"]:::gateway
+    GW2["API Gateway 2 (:8009)<br/>NestJS HTTP + Socket.IO"]:::gateway
   end
 
-  subgraph Infrastructure ["Shared Distributed Infrastructure"]
-    PubSub[("Redis (:6379)<br/>• Socket.IO Redis Adapter<br/>• Multi-Instance Presence<br/>• Keyv Global Data Cache")]:::cache
-    Broker[["RabbitMQ (:5672)<br/>AMQP Message Broker / RPC Queues"]]:::broker
+  subgraph Infrastructure ["Shared Infrastructure"]
+    direction LR
+    PubSub[("Redis (:6379)<br/>Socket.IO adapter,<br/>presence, cache")]:::cache
+    Broker[["RabbitMQ (:5672)<br/>RPC queues"]]:::broker
   end
 
   subgraph Services ["Microservices Tier"]
     direction LR
-    AuthSvc["Auth Service (NestJS RPC)<br/>Identity, Users, TypeORM"]:::service
-    ChatSvc["Chat Service (NestJS RPC)<br/>Conversations, Messages, Mongoose"]:::service
+    AuthSvc["Auth Service<br/>Identity, Users"]:::service
+    ChatSvc["Chat Service<br/>Conversations, Messages"]:::service
   end
 
-  subgraph Databases ["Database Tier"]
-    subgraph RelationalDB ["PostgreSQL Cluster (1 Primary + 2 Replicas)"]
-      SQL_Pri[("PostgreSQL Primary (:5432)<br/>WAL Level: replica")]:::db
-      SQL_Rep[("PostgreSQL Replica 1 (:5433)<br/>Hot Standby")]:::db
-      SQL_Rep2[("PostgreSQL Replica 2 (:5434)<br/>Hot Standby")]:::db
-    end
+  Data[("Database Tier<br/>(next figure)")]:::db
 
-    subgraph DocumentDB ["MongoDB Replica Set rs0 (1 Primary + 2 Replicas)"]
-      NoSQL_Pri[("MongoDB Primary (:27017)<br/>Priority: 2")]:::db
-      NoSQL_Rep[("MongoDB Secondary 1 (:27018)<br/>Priority: 1")]:::db
-      NoSQL_Rep2[("MongoDB Secondary 2 (:27019)<br/>Priority: 1")]:::db
-    end
-  end
-
-  %% Client to Edge
   Client -->|"HTTP / WebSockets"| LB
+  LB --> GW1
+  LB --> GW2
+  GW1 <-->|"State sync, presence"| PubSub
+  GW2 <-->|"State sync, presence"| PubSub
+  GW1 <-->|"RPC"| Broker
+  GW2 <-->|"RPC"| Broker
+  Broker <-->|"auth_queue"| AuthSvc
+  Broker <-->|"chat_queue"| ChatSvc
+  AuthSvc <-.->|"Cache-aside"| PubSub
+  ChatSvc <-.->|"Cache-aside"| PubSub
+  AuthSvc --> Data
+  ChatSvc --> Data
+```
 
-  %% Load Balancing to Gateways
-  LB -->|"ip_hash / Round-Robin"| GW1
-  LB -->|"ip_hash / Round-Robin"| GW2
+### Data Tier
 
-  %% Gateway WebSocket Syncing & Presence via Redis
-  GW1 <-->|"Pub/Sub State Sync & Presence"| PubSub
-  GW2 <-->|"Pub/Sub State Sync & Presence"| PubSub
+```mermaid
+flowchart TB
+  classDef edge fill:#e1e1e1,stroke:#333,stroke-width:2px,color:black;
+  classDef service fill:#f2d7d5,stroke:#333,stroke-width:2px,color:black;
+  classDef db fill:#d5f5e3,stroke:#333,stroke-width:2px,color:black;
 
-  %% Gateway to Microservices via RabbitMQ
-  GW1 <-->|"RPC Messages (auth_queue / chat_queue)"| Broker
-  GW2 <-->|"RPC Messages (auth_queue / chat_queue)"| Broker
+  AuthSvc["Auth Service<br/>(TypeORM)"]:::service
+  ChatSvc["Chat Service<br/>(Mongoose)"]:::service
 
-  Broker <--> AuthSvc
-  Broker <--> ChatSvc
+  subgraph RelationalDB ["PostgreSQL Cluster (1 Primary + 2 Standbys)"]
+    direction TB
+    Sentinel["postgres_sentinel<br/>failover, repointing, fencing"]:::edge
+    SQL_Pri[("postgres_primary :5432<br/>Primary at start-up<br/>(the role moves after a failover)")]:::db
+    SQL_Rep[("postgres_replica :5433<br/>Standby at start-up")]:::db
+    SQL_Rep2[("postgres_replica_2 :5434<br/>Standby at start-up")]:::db
+  end
 
-  %% Microservices to Redis Distributed Cache
-  AuthSvc <-->|"Cache-Aside (Users & Profiles)"| PubSub
-  ChatSvc <-->|"Cache-Aside (Conversations & History)"| PubSub
+  subgraph DocumentDB ["MongoDB Replica Set rs0 (3 Members)"]
+    direction TB
+    NoSQL_Pri[("mongo_primary :27017<br/>Primary, priority 2")]:::db
+    NoSQL_Rep[("mongo_replica :27018<br/>Secondary, priority 1")]:::db
+    NoSQL_Rep2[("mongo_replica_2 :27019<br/>Secondary, priority 1")]:::db
+  end
 
-  %% Services to Relational Database
-  AuthSvc -->|"Writes & Primary Reads"| SQL_Pri
-  AuthSvc -->|"Read-Only Directory Queries"| SQL_Rep
-  AuthSvc -->|"Read-Only Directory Queries"| SQL_Rep2
-  SQL_Pri -.->|"Physical Streaming Replication"| SQL_Rep
-  SQL_Pri -.->|"Physical Streaming Replication"| SQL_Rep2
+  AuthSvc -->|"Writes and primary reads<br/>(follows the Primary)"| SQL_Pri
+  AuthSvc -.->|"Directory reads"| SQL_Rep
+  SQL_Pri -.->|"Streaming replication"| SQL_Rep
+  SQL_Pri -.->|"Streaming replication"| SQL_Rep2
+  Sentinel -.->|"Health checks every 5 s,<br/>promote, repoint, fence"| SQL_Pri
 
-  %% Services to Document Database
   ChatSvc -->|"Writes (w: majority)"| NoSQL_Pri
-  ChatSvc -->|"secondaryPreferred Reads"| NoSQL_Rep
-  ChatSvc -->|"secondaryPreferred Reads"| NoSQL_Rep2
-  NoSQL_Pri -.->|"Oplog Sync & Heartbeats"| NoSQL_Rep
-  NoSQL_Pri -.->|"Oplog Sync & Heartbeats"| NoSQL_Rep2
+  ChatSvc -.->|"Optional reads<br/>(MONGO_READ_PREFERENCE, default primary)"| NoSQL_Rep
+  NoSQL_Pri -.->|"Oplog, heartbeats, elections"| NoSQL_Rep
+  NoSQL_Pri -.->|"Oplog, heartbeats, elections"| NoSQL_Rep2
+```
+
+### Deployment View
+
+Demonstrates what runs where on the single development machine: the Node.js applications run directly on the host through pnpm (there is no Dockerfile for them), while the infrastructure and the databases run as Docker Compose containers.
+
+```mermaid
+flowchart LR
+  classDef client fill:#f9f9f9,stroke:#333,stroke-width:2px,color:black;
+  classDef edge fill:#e1e1e1,stroke:#333,stroke-width:2px,color:black;
+  classDef gateway fill:#d4e6f1,stroke:#333,stroke-width:2px,color:black;
+  classDef broker fill:#fcf3cf,stroke:#333,stroke-width:2px,color:black;
+  classDef service fill:#f2d7d5,stroke:#333,stroke-width:2px,color:black;
+  classDef cache fill:#fdebd0,stroke:#333,stroke-width:2px,color:black;
+  classDef db fill:#d5f5e3,stroke:#333,stroke-width:2px,color:black;
+
+  subgraph Procs ["Node.js processes on the host (pnpm, not containerised)"]
+    direction TB
+    Web["Next.js web + BFF<br/>:3000"]:::client
+    subgraph GWs ["API Gateways"]
+      direction TB
+      GW1["gateway-8008<br/>:8008"]:::gateway
+      GW2["gateway-8009<br/>:8009"]:::gateway
+    end
+    Auth["auth-service"]:::service
+    Chat["chat-service"]:::service
+  end
+
+  subgraph Compose ["Docker Compose containers (one bridge network)"]
+    direction TB
+    subgraph Infra ["Infrastructure"]
+      direction LR
+      Nginx["app_nginx<br/>:80, :8080"]:::edge
+      Redis["app_redis<br/>:6379"]:::cache
+      Rabbit["app_rabbitmq<br/>:5672, :15672"]:::broker
+    end
+    subgraph PG ["PostgreSQL 18"]
+      direction LR
+      P1[("auth_postgres<br/>postgres_primary<br/>:5432")]:::db
+      P2[("postgres_replica<br/>:5433")]:::db
+      P3[("postgres_replica_2<br/>:5434")]:::db
+      Sent["postgres_sentinel"]:::edge
+    end
+    subgraph MG ["MongoDB 8 replica set rs0"]
+      direction LR
+      M1[("chat_mongo<br/>mongo_primary<br/>:27017")]:::db
+      M2[("mongo_replica<br/>:27018")]:::db
+      M3[("mongo_replica_2<br/>:27019")]:::db
+    end
+  end
+
+  Web -->|"HTTP, WebSocket"| Nginx
+  Nginx -->|"host.docker.internal"| GWs
+  GWs --> Redis
+  GWs --> Rabbit
+  Auth --> Rabbit
+  Chat --> Rabbit
+  Auth -->|"TypeORM"| PG
+  Chat -->|"Mongoose"| MG
+```
+
+### Fault Model
+
+Summarises which components are redundant and which are single points of failure, together with the fault types injected during testing.
+
+```mermaid
+flowchart LR
+  classDef ok fill:#d5f5e3,stroke:#333,stroke-width:2px,color:black;
+  classDef spof fill:#f2d7d5,stroke:#333,stroke-width:2px,color:black;
+  classDef fault fill:#fcf3cf,stroke:#333,stroke-width:2px,color:black;
+
+  Faults(["Injected faults<br/>stop, network partition,<br/>delay and packet loss, load"]):::fault
+
+  subgraph Redundant ["Redundant: a single failure is tolerated"]
+    direction TB
+    GW["Gateway x2<br/>crash: clients reconnect through Nginx"]:::ok
+    CHAT["chat-service x1..n<br/>crash of one instance: no message lost"]:::ok
+    PG["PostgreSQL x3<br/>primary crash or partition:<br/>writes back after 23 to 26 s"]:::ok
+    MG["MongoDB rs0 x3<br/>primary crash or partition:<br/>new primary after 10 to 12 s"]:::ok
+  end
+
+  subgraph Single ["Single points of failure"]
+    direction TB
+    NG["Nginx<br/>crash: the BFF loses its entry point (not measured)"]:::spof
+    RD["Redis<br/>crash: services survive,<br/>cross-gateway messages lost meanwhile"]:::spof
+    MQ["RabbitMQ<br/>crash: every RPC fails,<br/>recovers in 7 to 8 s"]:::spof
+    AU["auth-service<br/>crash: sign-in and token refresh fail (not measured)"]:::spof
+    SE["postgres_sentinel<br/>crash: no automatic promotion (not measured)"]:::spof
+  end
+
+  Faults -.-> Redundant
+  Faults -.-> Single
 ```
 
 ---
 
 ## 3. End-to-End Distributed Workflows
 
-### Workflow 1: Authentication & Token Rotation (Cache Invalidation & Primary Write)
+### Workflow 1: Registration & Sign-in (BFF, Primary Writes)
 
-Demonstrates the write path for authentication, password hashing, transaction boundaries, and Redis cache invalidation.
+Demonstrates the write path of authentication: the Next.js BFF route handlers, Argon2 password hashing, the sign-up transaction, cache invalidation, and the hashed refresh token stored on the PostgreSQL primary. Cookies are set by the BFF at sign-in only.
+
+#### 1a. Registration
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Client as Web Browser (Next.js)
+    actor Client as Web Browser
+    participant BFF as Next.js BFF<br/>(/api/auth/signup)
     participant Nginx as Nginx Proxy (:80)
-    participant GW as API Gateway (:8008/:8009)
+    participant GW as API Gateway
     participant Rabbit as RabbitMQ (auth_queue)
     participant Auth as Auth Microservice
     participant Redis as Redis Cache
-    participant PG_Pri as PostgreSQL Primary
-    participant PG_Rep as PostgreSQL Replica
+    participant PG as PostgreSQL Primary
 
-    Client->>Nginx: POST /api/auth/signup { userName, email, password }
-    Nginx->>GW: Forward HTTP Request
+    Client->>BFF: POST /api/auth/signup { userName, email, password }
+    BFF->>Nginx: POST /auth/signup
+    Nginx->>GW: Forward (least_conn)
     GW->>Rabbit: RPC Call: send('auth.signup', payload)
     Rabbit->>Auth: Consume message
     Auth->>Auth: Hash password with Argon2
-    Auth->>PG_Pri: BEGIN Transaction (Create User & Auth Entity)
-    PG_Pri-->>Auth: Commit & Return UUIDs
-    Auth->>Redis: Invalidate Cache: DEL users:all
-    PG_Pri-->>PG_Rep: Async Physical WAL Streaming
-    Auth-->>Rabbit: Return AuthenticatedUser
-    Rabbit-->>GW: Return response
-    GW-->>Nginx: 201 Created Envelope { data: user }
-    Nginx-->>Client: Set HttpOnly Cookies & Session
+    Auth->>PG: BEGIN, INSERT users, INSERT auth, COMMIT
+    Auth->>Redis: Invalidate cache: DEL users:all
+    Auth-->>GW: Created user (no credentials), via RabbitMQ
+    GW-->>BFF: 201 Created Envelope { data: user }
+    BFF-->>Client: 201 Created (no cookie is set at sign-up)
+```
+
+#### 1b. Sign-in
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client as Web Browser
+    participant BFF as Next.js BFF<br/>(/api/auth/signin)
+    participant GW as API Gateway<br/>(via Nginx)
+    participant Rabbit as RabbitMQ (auth_queue)
+    participant Auth as Auth Microservice
+    participant PG as PostgreSQL Primary
+
+    Client->>BFF: POST /api/auth/signin { email, password }
+    BFF->>GW: POST /auth/signin
+    GW->>Rabbit: RPC auth.validate_local, then auth.signin
+    Rabbit->>Auth: Consume message
+    Auth->>PG: SELECT user and credentials, verify the Argon2 hash
+    Auth->>Auth: Sign access token and refresh token (JWT)
+    Auth->>PG: UPDATE auth SET refresh_token = hash(refresh token)
+    Auth-->>GW: accessToken, refreshToken, user (via RabbitMQ)
+    GW-->>BFF: 201 Created Envelope { data }
+    BFF-->>Client: Set-Cookie access_token (15 min), refresh_token (7 days), HttpOnly
 ```
 
 ---
 
-### Workflow 2: Cross-Gateway Real-Time Messaging & Distributed Synchronization
+### Workflow 2: Cross-Gateway Real-Time Messaging & Distributed Synchronisation
 
-Illustrates how two users connected to completely different API Gateway instances exchange real-time messages via Redis Pub/Sub adapter and MongoDB majority persistence.
+Illustrates how two users connected to different API Gateway instances exchange real-time messages via the Redis adapter, with idempotent persistence (`clientMessageId`), MongoDB majority acknowledgement and a 10-second RPC timeout.
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Alice as Alice (Client A on GW1 :8008)
-    participant GW1 as API Gateway Instance 1 (:8008)
-    participant Redis as Redis Adapter & Cache
+    participant GW1 as API Gateway 1 (:8008)
     participant Rabbit as RabbitMQ (chat_queue)
     participant Chat as Chat Microservice
-    participant Mongo_Pri as MongoDB Primary (rs0)
-    participant Mongo_Rep as MongoDB Secondary (rs0)
-    participant GW2 as API Gateway Instance 2 (:8009)
+    participant Mongo as MongoDB Primary (rs0)
+    participant Redis as Redis (adapter and cache)
+    participant GW2 as API Gateway 2 (:8009)
     actor Bob as Bob (Client B on GW2 :8009)
 
-    Alice->>GW1: WS Emit 'sendMessage' { conversationId, text, senderId }
-    GW1->>Rabbit: RPC Call: send('save_message', payload)
-    Rabbit->>Chat: Consume 'save_message'
-    Chat->>Mongo_Pri: Insert Message & Update Conversation (w: majority)
-    Mongo_Pri->>Mongo_Rep: Oplog Replication & Quorum Ack
-    Mongo_Rep-->>Mongo_Pri: Acknowledged
-    Mongo_Pri-->>Chat: Saved Message Document
-    Chat->>Redis: Invalidate Cache: chat:messages & userConversations
-    Chat-->>Rabbit: Return savedMessage
-    Rabbit-->>GW1: RPC Response
-    GW1->>Redis: Redis Adapter Publish 'newMessage' to room (conversationId)
-    Redis-->>GW1: Local Room Broadcast
-    Redis-->>GW2: Cross-Gateway Broadcast (Redis Adapter)
-    GW1-->>Alice: Emit 'newMessage' (Echo / Confirmation)
-    GW2-->>Bob: Emit 'newMessage' (Delivered in Real-Time)
+    Alice->>GW1: WS sendMessage { conversationId, text, clientMessageId }
+    Note over GW1: Sender id comes from the authenticated socket, not from the payload
+    GW1->>Rabbit: RPC save_message (timeout 10 s)
+    Rabbit->>Chat: Consume save_message
+    Chat->>Mongo: Look up clientMessageId, insert message, update conversation (w: majority)
+    Mongo-->>Chat: Saved message (the existing one if the id was already stored)
+    Chat->>Redis: Invalidate message and conversation caches
+    Chat-->>GW1: savedMessage (via RabbitMQ)
+    GW1->>Redis: Redis adapter publishes newMessage to the room
+    Redis-->>GW2: Cross-gateway broadcast
+    GW2-->>Bob: newMessage (delivered in real time)
+    GW1-->>Alice: Ack with savedMessage, plus newMessage and conversationUpdated
+
+    opt No answer within 10 s
+        GW1-->>Alice: Ack error "Message service timeout"
+        Note over Alice: UI shows Not sent, Retry reuses the same clientMessageId
+    end
 ```
 
 ---
 
 ### Workflow 3: Multi-Instance Real-Time Online/Offline Presence Tracking
 
-Demonstrates how presence state is synchronized across nodes using Redis Sets when clients connect, open multiple tabs, or disconnect.
+Demonstrates how presence is kept in one Redis sorted set per user (socket id scored by its last heartbeat), refreshed every 10 s and swept every 15 s. A gateway that dies without closing its sockets therefore no longer leaves users online forever: their entries go stale after 30 s.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor User as User Device (Tab 1 / Tab 2)
-    participant GW as API Gateway Instance
-    participant Redis as Redis Server
-    participant GatewayCluster as All Gateway Instances (:8008 & :8009)
-    actor Peers as Other Online Users
+    actor User as User Device
+    participant GW as Gateway
+    participant Redis as Redis
+    participant Others as Other Gateways
+    actor Peers as Other Users
 
-    Note over User,Redis: --- USER CONNECTS (TAB 1) ---
-    User->>GW: WebSocket Handshake with JWT
-    GW->>GW: Verify JWT token (extract userId)
-    GW->>Redis: SADD presence:user_sockets:<userId> <socketId_1>
-    GW->>Redis: SADD presence:online_users <userId>
-    GW->>Redis: SCARD presence:user_sockets:<userId>
-    Redis-->>GW: count = 1 (First Connection -> Online!)
-    GW->>Redis: SMEMBERS presence:online_users
-    Redis-->>GW: Current Online User IDs
-    GW-->>User: Emit 'onlineUsers' [userId, ...]
-    GW->>GatewayCluster: Broadcast 'userStatusChanged' { userId, status: 'online' }
-    GatewayCluster-->>Peers: Emit 'userStatusChanged' -> Green Avatar Dot
+    Note over GW: User connects (first tab)
+    User->>GW: WebSocket handshake with JWT cookie
+    GW->>Redis: ZADD presence:sockets:userId (score now)
+    GW->>Redis: SADD presence:online_users userId
+    Redis-->>GW: 1 = user came online
+    GW->>Others: userStatusChanged online
+    Others-->>Peers: Green dot
 
-    Note over User,Redis: --- MULTIPLE TABS SUPPORT (TAB 2) ---
-    User->>GW: Tab 2 Connects (socketId_2)
-    GW->>Redis: SADD presence:user_sockets:<userId> <socketId_2>
-    Redis-->>GW: count = 2 (Already Online -> No redundant broadcast)
+    Note over GW,Redis: While connected
+    loop every 10 s
+        GW->>Redis: Heartbeat: ZADD score = now
+    end
+    loop every 15 s on every gateway
+        GW->>Redis: Drop sockets older than 30 s, SREM if none left
+    end
 
-    Note over User,Redis: --- TAB 1 CLOSES ---
-    User->>GW: Tab 1 Closes (Disconnect socketId_1)
-    GW->>Redis: SREM presence:user_sockets:<userId> <socketId_1>
-    Redis-->>GW: remaining count = 1 (User Still Online on Tab 2)
-
-    Note over User,Redis: --- ALL TABS CLOSED (OFFLINE) ---
-    User->>GW: Tab 2 Closes (Disconnect socketId_2)
-    GW->>Redis: SREM presence:user_sockets:<userId> <socketId_2>
-    Redis-->>GW: remaining count = 0 (Last Connection Closed!)
-    GW->>Redis: SREM presence:online_users <userId>
-    GW->>GatewayCluster: Broadcast 'userStatusChanged' { userId, status: 'offline' }
-    GatewayCluster-->>Peers: Emit 'userStatusChanged' -> Gray Avatar Dot
+    Note over GW: A tab closes
+    User->>GW: Disconnect
+    GW->>Redis: ZREM presence:sockets:userId
+    alt Other tab still connected
+        Redis-->>GW: ZCARD above 0, stays online
+    else Last socket removed
+        GW->>Redis: SREM presence:online_users
+        GW->>Others: userStatusChanged offline
+        Others-->>Peers: Grey dot
+    end
 ```
 
 ---
 
 ### Workflow 4: Distributed Cache-Aside & Replica Read Path
 
-Demonstrates how read queries for the user directory or conversation history bypass the primary database.
+Demonstrates how read queries are served from Redis and fall back to a standby (users) or to MongoDB (messages). Reading from MongoDB secondaries is optional (`MONGO_READ_PREFERENCE`, `primary` by default) and may return slightly stale data.
 
 ```mermaid
 sequenceDiagram
@@ -228,25 +350,125 @@ sequenceDiagram
     participant Rabbit as RabbitMQ
     participant Svc as Auth / Chat Microservice
     participant Redis as Redis Cache
-    participant ReplicaDB as PostgreSQL Replica / MongoDB Secondary
+    participant DB as PostgreSQL Standby (users)<br/>or MongoDB (messages)
 
-    Client->>GW: GET /api/users
-    GW->>Rabbit: RPC Call: send('user.find_all')
+    Client->>GW: GET users, conversations or messages
+    GW->>Rabbit: RPC call
     Rabbit->>Svc: Process query
-    Svc->>Redis: GET users:all
+    Svc->>Redis: GET cache key
 
-    alt Cache Hit
-        Redis-->>Svc: Return cached users list
-    else Cache Miss
-        Redis-->>Svc: null / expired
-        Svc->>ReplicaDB: Query Read-Replica (slave query runner / secondaryPreferred)
-        ReplicaDB-->>Svc: Return data
-        Svc->>Redis: SET users:all data (TTL: 60s)
+    alt Cache hit
+        Redis-->>Svc: Cached value
+    else Cache miss
+        Svc->>DB: Query (users: standby query runner, messages: MONGO_READ_PREFERENCE, default primary)
+        DB-->>Svc: Data
+        Svc->>Redis: SET with TTL (60 s lists, only the default page of 100 messages)
     end
 
-    Svc-->>Rabbit: Return data
-    Rabbit-->>GW: RPC Response
+    Svc-->>GW: Data (via RabbitMQ)
     GW-->>Client: 200 OK Envelope
+```
+
+---
+
+### Workflow 5: PostgreSQL Primary Failover (Sentinel)
+
+Demonstrates automatic recovery of the relational tier: failure detection, a second opinion from the standbys, promotion of the standby with the most WAL, repointing of the other standby, the topology watcher of the Auth microservice, and the return of the old primary (re-cloned as a standby, or fenced after a network partition). Measured recovery of writes: 23 to 26 s.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Old as Old Primary
+    participant Sentinel as postgres_sentinel
+    participant StdB as Standby B
+    participant StdA as Standby A<br/>(most WAL)
+    participant Auth as auth-service
+    actor Client as Web Browser
+
+    Note over Old: Primary stops
+    loop every 5 s, 3 failed rounds
+        Sentinel-xOld: pg_is_in_recovery()
+    end
+    Sentinel->>StdA: Still streaming? (second opinion)
+    StdA-->>Sentinel: No, primary is gone
+    Sentinel->>StdA: pg_promote()
+    StdA-->>Sentinel: Now PRIMARY (new timeline)
+    Sentinel->>StdB: Create slot, repoint, reload
+    StdB->>StdA: Streaming resumes
+    Auth->>StdA: Topology check finds new primary
+    Client->>Auth: Sign-in works again (23 to 26 s)
+
+    Note over Old: Old primary comes back
+    alt Container restart
+        Old->>StdA: Newer timeline: discard data, pg_basebackup
+    else Network partition (still writable)
+        Sentinel->>Old: Two primaries: shut stale one down
+        Old->>StdA: Restarts and re-clones as standby
+    end
+```
+
+---
+
+### Workflow 6: Gateway Failure & Client Reconnection
+
+Demonstrates what happens when the gateway serving a client is killed: Socket.IO reconnects through Nginx to the surviving gateway, the client re-joins its open conversation, and the stale presence entry expires if the user does not come back.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Alice as Alice
+    participant Nginx as Nginx
+    participant GWA as Gateway A
+    participant GWB as Gateway B
+    participant Redis as Redis
+    actor Bob as Bob (on B)
+
+    Alice->>Nginx: Socket.IO (WebSocket)
+    Nginx->>GWA: least_conn picks Gateway A
+    GWA->>Redis: Presence heartbeat every 10 s
+
+    Note over GWA: Gateway A is killed
+    GWA--xAlice: Socket closes
+    Alice->>Nginx: Socket.IO reconnects by itself
+    Nginx->>GWB: Routed to the surviving gateway
+    GWB->>Redis: Verify cookie, register socket
+    GWB-->>Alice: gatewayConnected, onlineUsers
+    Alice->>GWB: joinConversation, then sendMessage<br/>(same clientMessageId on retry)
+    GWB-->>Bob: newMessage
+
+    opt Alice does not reconnect
+        Note over Redis: Old socket entry stale after 30 s
+        GWB->>Redis: Sweep every 15 s removes it
+        GWB-->>Bob: userStatusChanged offline (31 to 40 s)
+    end
+```
+
+---
+
+### Workflow 7: MongoDB Primary Election
+
+Demonstrates replica set recovery: the two surviving members hold a majority (2 of 3), elect a new primary within 10 to 12 s, and the old primary rejoins as a secondary.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Chat as Chat Microservice
+    participant M1 as mongo_primary<br/>(priority 2)
+    participant M2 as mongo_replica
+    participant M3 as mongo_replica_2
+
+    Note over M1: Primary stops
+    M2-xM1: Heartbeat fails
+    M3-xM1: Heartbeat fails
+    M2->>M3: Request vote (2 of 3 is a majority)
+    M3-->>M2: Vote granted
+    Note over M2: One of the two becomes PRIMARY
+    Chat->>M2: Driver finds the new primary and retries the write
+    M2-->>Chat: Acknowledged by a majority (10 to 12 s after the crash)
+
+    Note over M1: Old primary restarts
+    M1->>M2: Catches up from the oplog, rejoins as SECONDARY
+    Note over M1,M2: Priority 2 lets mongo_primary take the role back later
 ```
 
 ---
@@ -255,7 +477,7 @@ sequenceDiagram
 
 The system employs **Polyglot Persistence**:
 
-- **PostgreSQL**: Relational integrity for user identities, credentials, role-based access control, and soft deletion. Primary keys are UUIDs (`gen_random_uuid()`).
+- **PostgreSQL**: Relational integrity for user identities, credentials, role-based access control, and soft deletion. Primary keys are UUIDs (`uuid_generate_v4()`).
 - **MongoDB**: Flexible JSON documents for nested conversation participants, unread receipts, and chat message streams.
 
 ```mermaid
@@ -268,7 +490,7 @@ erDiagram
     USERS }o..o{ MESSAGES : "logical reference (readBy)"
 
     USERS {
-        uuid id PK "gen_random_uuid()"
+        uuid id PK "uuid_generate_v4()"
         varchar user_name UK "Unique active username"
         varchar email UK "Unique email address"
         users_role_enum role "Default 'user' (admin, user)"
@@ -279,7 +501,7 @@ erDiagram
     }
 
     AUTH {
-        uuid id PK "gen_random_uuid()"
+        uuid id PK "uuid_generate_v4()"
         uuid user_id FK "References users.id ON DELETE CASCADE"
         varchar hashed_password "Argon2id hashed password string"
         varchar auth_provider "Provider type (default 'local')"
@@ -314,6 +536,7 @@ erDiagram
         string senderId "Logical reference to users.id (UUID)"
         string text "Message body text"
         StringArray readBy "Array of user UUIDs who read the message"
+        string clientMessageId "Client-generated id for idempotent sends (unique per conversation)"
         Date createdAt "Creation timestamp (compound index)"
         Date updatedAt "Update timestamp"
         number __v "Document version key"
@@ -325,7 +548,7 @@ erDiagram
 #### 1. PostgreSQL Relational Schemas (`apps/auth-service`)
 
 - **`users` Table**:
-  - `id` (`uuid`, PK): Primary identifier using PostgreSQL native `gen_random_uuid()`.
+  - `id` (`uuid`, PK): Primary identifier generated by `uuid_generate_v4()`.
   - `user_name` & `email`: Enforced unique constraints and indexed. Partial index `idx_active_users_username` filters out soft-deleted users (`deleted_at IS NULL`).
   - `role`: Native PostgreSQL enum `users_role_enum ('admin', 'user')`.
   - `deleted_at`: Soft-deletion timestamp. Allows account recovery and historical audit without cascading destructive deletes.
@@ -348,6 +571,7 @@ erDiagram
 - **`messages` Collection**:
   - Compound index `{ conversationId: 1, createdAt: -1 }` guarantees rapid pagination of chat history from latest to oldest.
   - `readBy`: Array of UUID strings indicating read receipts.
+  - `clientMessageId`: Optional string generated by the client. A unique partial index on `{ conversationId, clientMessageId }` (only when the id is a string) makes retries idempotent: a repeated send returns the stored message instead of inserting a duplicate.
 
 ---
 
@@ -356,9 +580,9 @@ erDiagram
 | Distributed System Pillar                          | How It Is Implemented In This Project                                                                                                                                                                                                                                                                                                                                                                                                                    | Distributed Characteristic                                               |
 | :------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------- |
 | **1. Concurrency & Network Communication**         | Services run as independent OS processes/containers communicating over TCP/IP via HTTP, WebSockets, AMQP (RabbitMQ), and Redis protocol.                                                                                                                                                                                                                                                                                                                 | **No shared memory**; interaction occurs purely via message passing.     |
-| **2. Horizontal Scaling & Load Balancing**         | Nginx sits in front of twin API Gateway instances (`:8008` and `:8009`), routing HTTP traffic and upgrading WebSocket connections using `ip_hash`.                                                                                                                                                                                                                                                                                                       | Load distribution across multiple gateway instances.                     |
+| **2. Horizontal Scaling & Load Balancing**         | Nginx sits in front of twin API Gateway instances (`:8008` and `:8009`), routing HTTP traffic and upgrading WebSocket connections using the `least_conn` strategy (each new connection goes to the gateway holding the fewest open connections), which suits long-lived WebSockets.                                                                                                                                                                      | Load distribution across multiple gateway instances.                     |
 | **3. Message-Oriented Middleware (MOM)**           | Gateway forwards client actions to microservices using RabbitMQ (`auth_queue` and `chat_queue`) over RPC pattern (`send/firstValueFrom`).                                                                                                                                                                                                                                                                                                                | Decoupled execution, message buffering, and service discovery.           |
-| **4. Distributed State & Multi-Node Coordination** | Multi-instance WebSockets use `@socket.io/redis-adapter` for pub/sub cross-node event broadcasting. Presence is tracked across nodes using Redis Sets (`presence:online_users` and `presence:user_sockets:<userId>`).                                                                                                                                                                                                                                    | State synchronization across independent server nodes.                   |
+| **4. Distributed State & Multi-Node Coordination** | Multi-instance WebSockets use `@socket.io/redis-adapter` for pub/sub cross-node event broadcasting. Presence is tracked across nodes with a Redis set of online users (`presence:online_users`) and one sorted set of heartbeat-scored sockets per user (`presence:sockets:<userId>`), refreshed every 10 s and expired after 30 s.                                                                                                                      | State synchronization across independent server nodes.                   |
 | **5. Distributed Caching & Cache-Aside**           | Global Redis cache (`@nestjs/cache-manager` + `@keyv/redis`) with cache invalidation across services on write mutations.                                                                                                                                                                                                                                                                                                                                 | Reduced latency and shared memory offloading across distributed workers. |
 | **6. Database Replication & Read Distribution**    | • **PostgreSQL**: Primary-Standby physical WAL streaming replication (`max_wal_senders=10`, `hot_standby=on`). Write queries go to Master; directory reads query Slave runner. A sentinel daemon promotes a standby automatically when the primary fails and fences a stale primary that comes back (`scripts/postgres-sentinel.sh`).<br>• **MongoDB**: 3-node Replica Set (`rs0`) with primary election, oplog replication, and keyfile authentication. | Redundancy, write-master/read-replica topology.                          |
 | **7. Heterogeneous Polyglot Persistence**          | Relational data (Users, Auth credentials) in PostgreSQL; document/chat data (Conversations, Messages) in MongoDB; transient session state in Redis.                                                                                                                                                                                                                                                                                                      | Polyglot persistence tailored to data models.                            |
@@ -395,7 +619,7 @@ erDiagram
 - Microservices decoupled by Message Broker (RabbitMQ RPC).
 - Horizontally scaled gateway tier behind a reverse proxy (Nginx).
 - Multi-instance WebSocket synchronization through Redis pub/sub.
-- Distributed user presence across instances using Redis sets.
+- Distributed user presence across instances using Redis sets and heartbeats.
 - Multi-node database replication (PostgreSQL WAL streaming + MongoDB Replica Set).
 - Shared distributed cache (Redis).
 
@@ -417,6 +641,6 @@ erDiagram
 
 > ### System Architecture Overview (For Report)
 >
-> \*"The developed social media platform is designed as a distributed, service-oriented architecture (SOA). The presentation layer is built with Next.js 16 and React 19. Incoming HTTP and WebSocket connections are load-balanced via an Nginx reverse proxy using IP-hashing to distribute requests across multiple stateless API Gateway instances. Communication between the edge gateway and internal business microservices (Authentication and Chat) is decoupled through RabbitMQ message-oriented middleware using asynchronous RPC queues.
+> \*"The developed social media platform is designed as a distributed, service-oriented architecture (SOA). The presentation layer is built with Next.js 16 and React 19. Incoming HTTP and WebSocket connections are load-balanced via an Nginx reverse proxy using least-connections balancing to distribute requests across multiple stateless API Gateway instances. Communication between the edge gateway and internal business microservices (Authentication and Chat) is decoupled through RabbitMQ message-oriented middleware using asynchronous RPC queues.
 >
-> Cross-gateway WebSocket state and online presence are coordinated in real-time through a Redis pub/sub adapter and distributed in-memory sets. Persistence employs a distributed polyglot model: relational identity management is backed by a PostgreSQL cluster with primary-standby WAL streaming replication, while conversation and message history is managed by a MongoDB replica set (rs0) enforcing majority write concerns. A distributed Redis cache-aside layer is integrated across services to reduce read latency and maintain high throughput."\*
+> Cross-gateway WebSocket state and online presence are coordinated in real-time through a Redis pub/sub adapter and heartbeat-based Redis sets. Persistence employs a distributed polyglot model: relational identity management is backed by a PostgreSQL cluster with primary-standby WAL streaming replication and an automatic failover sentinel, while conversation and message history is managed by a MongoDB replica set (rs0) enforcing majority write concerns. A distributed Redis cache-aside layer is integrated across services to reduce read latency and maintain high throughput."\*

@@ -1,0 +1,26 @@
+flowchart LR
+  classDef ok fill:#d5f5e3,stroke:#333,stroke-width:2px,color:black;
+  classDef spof fill:#f2d7d5,stroke:#333,stroke-width:2px,color:black;
+  classDef fault fill:#fcf3cf,stroke:#333,stroke-width:2px,color:black;
+
+  Faults(["Injected faults<br/>stop, network partition,<br/>delay and packet loss, load"]):::fault
+
+  subgraph Redundant ["Redundant: a single failure is tolerated"]
+    direction TB
+    GW["Gateway x2<br/>crash: clients reconnect through Nginx"]:::ok
+    CHAT["chat-service x1..n<br/>crash of one instance: no message lost"]:::ok
+    PG["PostgreSQL x3<br/>primary crash or partition:<br/>writes back after 23 to 26 s"]:::ok
+    MG["MongoDB rs0 x3<br/>primary crash or partition:<br/>new primary after 10 to 12 s"]:::ok
+  end
+
+  subgraph Single ["Single points of failure"]
+    direction TB
+    NG["Nginx<br/>crash: the BFF loses its entry point (not measured)"]:::spof
+    RD["Redis<br/>crash: services survive,<br/>cross-gateway messages lost meanwhile"]:::spof
+    MQ["RabbitMQ<br/>crash: every RPC fails,<br/>recovers in 7 to 8 s"]:::spof
+    AU["auth-service<br/>crash: sign-in and token refresh fail (not measured)"]:::spof
+    SE["postgres_sentinel<br/>crash: no automatic promotion (not measured)"]:::spof
+  end
+
+  Faults -.-> Redundant
+  Faults -.-> Single

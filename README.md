@@ -244,8 +244,8 @@ flowchart TB
   end
 
   subgraph Infrastructure ["Shared Infrastructure"]
-    PubSub[(Pub/Sub Cache for WebSockets)]:::cache
-    Broker[[Message Broker / Event Bus]]:::broker
+    PubSub[(Cache, Presence & Pub/Sub for WebSockets)]:::cache
+    Broker[[Message Broker - RPC Queues]]:::broker
   end
 
   subgraph Services ["Microservices Tier"]
@@ -257,12 +257,13 @@ flowchart TB
   subgraph Databases ["Database Tier"]
     subgraph RelationalDB ["Relational Database Cluster"]
       SQL_Pri[(Primary Node)]:::db
-      SQL_Rep[(Read Replica)]:::db
+      SQL_Rep[(2 Standby Nodes)]:::db
+      Sentinel[Failover Sentinel]:::edge
     end
 
-    subgraph DocumentDB ["Document Database Cluster"]
-      NoSQL_Pri[(Primary Node)]:::db
-      NoSQL_Rep[(Read Replica)]:::db
+    subgraph DocumentDB ["Document Database Replica Set"]
+      NoSQL_Pri[(Primary Member)]:::db
+      NoSQL_Rep[(2 Secondary Members)]:::db
     end
   end
 
@@ -285,14 +286,16 @@ flowchart TB
   Broker <--> ChatSvc
 
   %% Services to Relational Database
-  AuthSvc -->|Writes| SQL_Pri
-  AuthSvc -->|Reads| SQL_Rep
+  AuthSvc -->|Writes & Reads| SQL_Pri
+  AuthSvc -.->|Directory Reads| SQL_Rep
   SQL_Pri -.->|Async Replication| SQL_Rep
+  Sentinel -.->|Monitors, Promotes, Fences| SQL_Pri
+  Sentinel -.->|Monitors, Promotes| SQL_Rep
 
   %% Services to Document Database
-  ChatSvc -->|Writes| NoSQL_Pri
-  ChatSvc -->|Reads| NoSQL_Rep
-  NoSQL_Pri -.->|Async Replication| NoSQL_Rep
+  ChatSvc -->|Writes, Majority Acknowledged| NoSQL_Pri
+  ChatSvc -.->|Optional Secondary Reads| NoSQL_Rep
+  NoSQL_Pri -.->|Replication & Elections| NoSQL_Rep
 ```
 
 **Note**: If you can't connect to RabbitMQ or get No_Authorized in rabbitmq management. Run following command

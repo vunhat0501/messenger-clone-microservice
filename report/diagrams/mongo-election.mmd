@@ -1,0 +1,19 @@
+sequenceDiagram
+    autonumber
+    participant Chat as Chat Microservice
+    participant M1 as mongo_primary<br/>(priority 2)
+    participant M2 as mongo_replica
+    participant M3 as mongo_replica_2
+
+    Note over M1: Primary stops
+    M2-xM1: Heartbeat fails
+    M3-xM1: Heartbeat fails
+    M2->>M3: Request vote (2 of 3 is a majority)
+    M3-->>M2: Vote granted
+    Note over M2: One of the two becomes PRIMARY
+    Chat->>M2: Driver finds the new primary and retries the write
+    M2-->>Chat: Acknowledged by a majority (10 to 12 s after the crash)
+
+    Note over M1: Old primary restarts
+    M1->>M2: Catches up from the oplog, rejoins as SECONDARY
+    Note over M1,M2: Priority 2 lets mongo_primary take the role back later

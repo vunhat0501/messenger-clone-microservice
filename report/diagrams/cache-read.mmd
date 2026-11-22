@@ -1,0 +1,24 @@
+sequenceDiagram
+    autonumber
+    actor Client as Web Browser
+    participant GW as API Gateway
+    participant Rabbit as RabbitMQ
+    participant Svc as Auth / Chat Microservice
+    participant Redis as Redis Cache
+    participant DB as PostgreSQL Standby (users)<br/>or MongoDB (messages)
+
+    Client->>GW: GET users, conversations or messages
+    GW->>Rabbit: RPC call
+    Rabbit->>Svc: Process query
+    Svc->>Redis: GET cache key
+
+    alt Cache hit
+        Redis-->>Svc: Cached value
+    else Cache miss
+        Svc->>DB: Query (users: standby query runner, messages: MONGO_READ_PREFERENCE, default primary)
+        DB-->>Svc: Data
+        Svc->>Redis: SET with TTL (60 s lists, only the default page of 100 messages)
+    end
+
+    Svc-->>GW: Data (via RabbitMQ)
+    GW-->>Client: 200 OK Envelope

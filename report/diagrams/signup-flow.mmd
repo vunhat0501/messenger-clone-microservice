@@ -1,0 +1,22 @@
+sequenceDiagram
+    autonumber
+    actor Client as Web Browser
+    participant BFF as Next.js BFF<br/>(/api/auth/signup)
+    participant Nginx as Nginx Proxy (:80)
+    participant GW as API Gateway
+    participant Rabbit as RabbitMQ (auth_queue)
+    participant Auth as Auth Microservice
+    participant Redis as Redis Cache
+    participant PG as PostgreSQL Primary
+
+    Client->>BFF: POST /api/auth/signup { userName, email, password }
+    BFF->>Nginx: POST /auth/signup
+    Nginx->>GW: Forward (least_conn)
+    GW->>Rabbit: RPC Call: send('auth.signup', payload)
+    Rabbit->>Auth: Consume message
+    Auth->>Auth: Hash password with Argon2
+    Auth->>PG: BEGIN, INSERT users, INSERT auth, COMMIT
+    Auth->>Redis: Invalidate cache: DEL users:all
+    Auth-->>GW: Created user (no credentials), via RabbitMQ
+    GW-->>BFF: 201 Created Envelope { data: user }
+    BFF-->>Client: 201 Created (no cookie is set at sign-up)

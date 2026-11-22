@@ -1,0 +1,30 @@
+{
+  "theme": "base",
+  "themeVariables": {
+    "fontFamily": "Segoe UI, Arial, sans-serif",
+    "fontSize": "16px",
+    "primaryColor": "#d4e6f1",
+    "primaryBorderColor": "#333333",
+    "primaryTextColor": "#000000",
+    "lineColor": "#333333",
+    "actorBkg": "#d4e6f1",
+    "actorBorder": "#333333",
+    "actorTextColor": "#000000",
+    "signalColor": "#333333",
+    "signalTextColor": "#000000",
+    "noteBkgColor": "#fcf3cf",
+    "noteBorderColor": "#333333",
+    "noteTextColor": "#000000",
+    "labelBoxBkgColor": "#e1e1e1",
+    "labelBoxBorderColor": "#333333",
+    "loopTextColor": "#000000"
+  },
+  "sequence": {
+    "mirrorActors": false,
+    "actorMargin": 40,
+    "messageFontSize": 15,
+    "noteFontSize": 14,
+    "wrap": true,
+    "width": 200
+  }
+}
