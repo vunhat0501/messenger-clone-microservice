@@ -1,0 +1,9 @@
+mode,round,old_primary,new_primary,write_outage_ms,split_brain_seen,rejoin_ms,standbys_streaming_after,app_fix
+stop,1,postgres_replica,postgres_primary,72882,false,2201,2,before
+stop,2,postgres_primary,postgres_replica,26193,false,2171,2,before
+stop,3,postgres_replica,postgres_primary,23689,false,2090,2,before
+partition,1,postgres_primary,postgres_replica,,true,6426,2,before
+partition,1,postgres_replica,postgres_primary,24320,true,2110,2,after
+stop,1,postgres_primary,postgres_replica,25895,false,2129,2,after
+stop,2,postgres_replica,postgres_primary,23702,false,2112,2,after
+stop,3,postgres_primary,postgres_replica,22634,false,2119,2,after
