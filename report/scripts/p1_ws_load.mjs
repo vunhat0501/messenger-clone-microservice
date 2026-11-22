@@ -28,7 +28,18 @@ for (let i = 0; i < N; i += 20) {
   for (const r of res) (r.socket.connected ? sockets.push(r) : connectFailures++);
   await sleep(100);
 }
-for (const s of sockets) s.socket.emit('joinConversation', { conversationId: conv });
+// RECONNECT=1: sockets reconnect by themselves and rejoin the room (used by the faults-under-load run).
+let reconnects = 0;
+for (const s of sockets) {
+  if (process.env.RECONNECT) {
+    s.socket.io.reconnection(true);
+    s.socket.io.reconnectionDelay(500);
+    s.socket.io.reconnectionDelayMax(2000);
+    s.socket.on('connect', () => { if (s.joined) { reconnects++; s.socket.emit('joinConversation', { conversationId: conv }); } });
+  }
+  s.socket.emit('joinConversation', { conversationId: conv });
+  s.joined = true;
+}
 await sleep(500);
 
 const sentAt = new Map();
@@ -69,7 +80,7 @@ await sleep(3000); // let in-flight messages land
 const expected = sent * sockets.length;
 const f = (x) => (x === null || x === undefined ? null : Math.round(x * 10) / 10);
 const row = {
-  mode, sockets_requested: N, sockets_connected: sockets.length, connect_failures: connectFailures,
+  label: process.env.LABEL || '', reconnects, mode, sockets_requested: N, sockets_connected: sockets.length, connect_failures: connectFailures,
   seconds: SECONDS, rate_per_sender: RATE, senders: senders.length,
   messages_sent: sent, ack_errors: ackErrors, throughput_msg_s: f(sent / SECONDS),
   deliveries_expected: expected, deliveries_received: deliveries,

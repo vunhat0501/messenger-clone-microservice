@@ -155,7 +155,7 @@ chat-service thứ hai giảm tiếp.
 | Mongo primary chết 40 s                                | Kill container              | Bầu primary mới khoảng 10–12 s, chỉ 1/78 mẫu lỗi rồi hồi phục                                                                |
 | Ngắt mạng Mongo primary 30 s (`mongo-net`)             | `docker network disconnect` | Hai node còn lại bầu primary mới; node bị cô lập tự hạ xuống SECONDARY khi nối lại, **không có hai primary**; 1–2/25 mẫu lỗi |
 | Ngắt mạng Redis 12 s (`redis-net`)                     | Như trên                    | 0–2/19 mẫu lỗi, gateway sống                                                                                                 |
-| Ngắt mạng RabbitMQ 12 s (`rabbitmq-net`)               | Như trên                    | **Chat-service chết** (xem mục 5)                                                                                            |
+| Ngắt mạng RabbitMQ 12 s (`rabbitmq-net`)               | Như trên                    | Trước khi sửa: **chat-service chết** (xem mục 5). Sau khi sửa: chat-service sống và tự nhận việc lại                         |
 | Một gateway so với qua Nginx                           | Tải REST                    | Một gateway ≈ 3.500–3.800 yêu cầu/giây; qua Nginx sau sửa 11.467 yêu cầu/5 s, 0 lỗi                                          |
 | Cache bật/tắt                                          | Tải REST 50 kết nối         | 996 so với 145 yêu cầu/giây (≈ 6,9 lần)                                                                                      |
 
@@ -166,14 +166,37 @@ nên node Mongo khác không tìm thấy `mongo_primary` và cụm chỉ còn 2/
 tin tới đủ chỉ còn 61% và có hơn 8.500 lỗi. Script đã sửa để nối lại với `--alias`. Kết quả cũng cho thấy cụm Mongo
 mất 1/3 node thì thông lượng ghi sụp mạnh.
 
+### 4.6 Lỗi giữa lúc tải lớn (`run_p8_faults_under_load.sh`)
+
+250 socket tự nối lại, mọi người gửi 0,2 tin/s trong 60 s; lỗi gây ở giây 20 và khôi phục ở giây 35.
+
+| Lỗi                                   | Nhận đủ | Lỗi ack | p95 (ms) | Ghi chú                                   |
+| ------------------------------------- | ------- | ------- | -------- | ----------------------------------------- |
+| Không lỗi (đối chứng)                 | 100%    | 0       | 87       |                                           |
+| Tắt gateway 8009                      | 80%     | 275     | 3.762    | 125 socket tự nối lại                     |
+| Tắt chat-service                      | 83,8%   | 488     | 8.144    | Ack quá hạn 10 s                          |
+| Redis chết 15 s                       | 83,1%   | 0       | 45       | Tin chéo gateway mất trong lúc Redis chết |
+| RabbitMQ chết 15 s, **trước khi sửa** | 42,6%   | 1.617   | 42       | Chat-service thoát tiến trình             |
+| RabbitMQ chết 15 s, sau khi sửa       | 66,6%   | 1.001   | 44       | Chat-service sống                         |
+| Ngắt mạng RabbitMQ 15 s, sau khi sửa  | 70,5%   | 885     | 45       | Chat-service sống                         |
+| Mongo primary chết 15 s               | 94,7%   | 160     | 8.070    | Ghi quá hạn trong lúc bầu primary         |
+
+### 4.7 Đọc replica (`run_p3_read_replica.sh`)
+
+Đọc tin nhắn bỏ qua cache (mỗi yêu cầu một `limit` khác), 50 kết nối, 6 lần mỗi chế độ: `primary` 56 yêu cầu/s (p95 2.222 ms),
+`secondaryPreferred` 57 yêu cầu/s (p95 2.282 ms). **Không có khác biệt về thông lượng**: nút cổ chai là chat-service và gateway
+(đọc và tuần tự hoá khoảng 1.500 tin mỗi yêu cầu), không phải Mongo (CPU mỗi node 6–18%). `secondaryPreferred` chỉ dàn tải
+đều ra ba node.
+
 ---
 
 ## 5. Phát hiện chưa sửa và giới hạn
 
-1. **Chat-service chết khi ngắt mạng RabbitMQ.** Sau `Heartbeat timeout`, `amqplib` phát sự kiện `error` trên channel
-   không có bộ lắng nghe (`Error: channel closed`) và tiến trình thoát. Auth-service sống sót. Không có trình giám sát tự
-   khởi động lại (chế độ watch không bật lại tiến trình đã chết). Cùng loại với lỗi 1 (thiếu bộ lắng nghe lỗi).
-   Hướng sửa: bắt `error` của channel, hoặc chạy dưới trình giám sát (Docker restart policy, pm2).
+1. **Chat-service chết khi RabbitMQ chết hoặc bị ngắt mạng (ĐÃ SỬA).** Nest gửi trả lời RPC mà không chờ kết quả; khi broker biến mất
+   đúng lúc đó, lời hứa bị từ chối với `Error: channel closed` mà không ai xử lý nên Node thoát tiến trình (auth-service chết hoặc
+   sống tuỳ thời điểm). Sửa bằng `common/rmq-rejection-guard.ts` (cài ở `main.ts` của chat-service và auth-service): ghi log các
+   lỗi mất kết nối broker và chạy tiếp; mọi lỗi chưa xử lý khác vẫn dừng tiến trình. Đã kiểm chứng bằng cách chạy lại hai kịch
+   bản (chết và ngắt mạng RabbitMQ) dưới tải 250 socket: chat-service sống và tự nhận việc lại.
 2. **Sentinel Postgres chỉ failover được một lần.** Nó theo dõi cố định host `postgres_primary`; sau lần failover đầu,
    primary cũ được dựng lại thành standby và không còn failover lần hai. Nếu sentinel chỉ mất mạng tới primary (primary
    vẫn sống) thì có thể sinh hai primary (split-brain). Sentinel cũng là một điểm chết đơn.
@@ -181,7 +204,7 @@ mất 1/3 node thì thông lượng ghi sụp mạnh.
 4. **Cookie gắn theo host:** hai người dùng cùng trên một máy phải dùng hai trình duyệt (hoặc cửa sổ riêng tư) cùng `localhost`.
 5. **Hạ tầng cùng một máy**, ứng dụng chưa đóng gói Docker (không có Dockerfile), không có mạng thật giữa các nút.
 6. 7 tệp spec dựng sẵn của auth-service và chat-service vẫn lỗi (lệch dependency injection), có từ trước, chưa sửa.
-7. Chưa đo: tải hỗn hợp có lỗi (gây lỗi giữa lúc 250 người đang gửi), mạng chậm hoặc mất gói, chênh lệch đọc replica.
+7. Chưa đo: mạng chậm hoặc mất gói; Postgres failover thật (script `f7_postgres_failover.mjs` đã có nhưng chưa chạy).
 
 ---
 
